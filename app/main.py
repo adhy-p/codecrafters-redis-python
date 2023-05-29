@@ -15,8 +15,9 @@ def main():
     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
     conn, addr = server_socket.accept()  # wait for client
 
-    conn.recv(2048)
-    conn.send(wrap_resp("PONG"))
+    while True:
+        conn.recv(2048)
+        conn.send(wrap_resp("PONG"))
 
 
 if __name__ == "__main__":
