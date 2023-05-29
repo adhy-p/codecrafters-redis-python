@@ -1,3 +1,4 @@
+import select
 import socket
 
 
@@ -13,11 +14,35 @@ def main():
     print("Logs from your program will appear here!")
 
     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
-    conn, addr = server_socket.accept()  # wait for client
+    server_socket.setblocking(0)
+
+    active_connections = [server_socket]
 
     while True:
-        conn.recv(2048)
-        conn.send(wrap_resp("PONG"))
+        print("polling sockets")
+        readable, writable, exceptional = select.select(active_connections, [], [])
+
+        for s in readable:
+            if s is server_socket:
+                conn, addr = server_socket.accept()  # wait for client
+                print(f"received connection from {addr}")
+                active_connections.append(conn)
+                conn.recv(2048)
+                conn.send(wrap_resp("PONG"))
+            else:
+                data = s.recv(2048)
+                if data:
+                    print("sending response to ping message")
+                    s.send(wrap_resp("PONG"))
+                else:
+                    print("client disconnected")
+                    active_connections.remove(s)
+                    s.close()
+
+        for s in exceptional:
+            print("exception")
+            active_connections.remove(s)
+            s.close()
 
 
 if __name__ == "__main__":
