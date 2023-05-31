@@ -1,6 +1,7 @@
+from enum import Enum
 import select
 import socket
-from enum import Enum
+import time
 
 CR = b"\r\n"
 RESP_TYPE = Enum("RESP_TYPE",
@@ -12,6 +13,7 @@ RESP_SYMBOL = {
         RESP_TYPE.BULKSTRING: b"$",
         RESP_TYPE.ARRAY: b"*",
         }
+NIL = RESP_SYMBOL[RESP_TYPE.BULKSTRING] + str(-1).encode("utf-8") + CR
 
 
 class RedisServer:
@@ -21,6 +23,7 @@ class RedisServer:
                 ("localhost", 6379), reuse_port=True)
         self.server_socket.setblocking(0)
         self.active_connections = [self.server_socket]
+        self.data_store = {}
 
     def serve(self):
         while True:
@@ -122,7 +125,27 @@ class RedisServer:
         elif req_type == b"ECHO":
             resp_type = RESP_TYPE.BULKSTRING
             resp_body = req[1]
-
+        elif req_type == b"SET":
+            if len(req) > 3:
+                assert req[3] == b"PX"
+                expiry = time.time_ns() // 1_000_000 + int(req[4].decode())
+            else:
+                expiry = -1
+            self.data_store[req[1]] = (req[2], expiry)
+            resp_type = RESP_TYPE.SIMPLESTRING
+            resp_body = b"OK"
+        elif req_type == b"GET":
+            resp_type = RESP_TYPE.BULKSTRING
+            if req[1] in self.data_store:
+                value, expiry = self.data_store[req[1]]
+                print(expiry, time.time_ns() // 1_000_000)
+                print(f"expired? {time.time_ns() // 1_000_000 > expiry}")
+                if expiry == -1 or time.time_ns() // 1_000_000 <= expiry:
+                    resp_body = value
+                else:
+                    resp_body = None
+            else:
+                resp_body = None
         print("sending response to client")
         client.send(self._wrap_resp(resp_type, resp_body))
 
@@ -130,9 +153,11 @@ class RedisServer:
         if type_str == RESP_TYPE.SIMPLESTRING:
             return RESP_SYMBOL[type_str] + message + CR
         if type_str == RESP_TYPE.BULKSTRING:
+            if not message:
+                return NIL
             return RESP_SYMBOL[type_str] \
-                    + str(len(message)).encode("utf-8") + CR \
-                    + message + CR
+                + str(len(message)).encode("utf-8") + CR \
+                + message + CR
         if type_str == RESP_TYPE.ARRAY:
             return RESP_SYMBOL[type_str] + message + CR
 
