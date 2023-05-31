@@ -111,9 +111,9 @@ class RedisServer:
         print("parsed request:", req)
         assert (len(req) >= 1)
 
-        req_type = req[0]
+        req_type = req[0].upper()
         resp_type = RESP_TYPE.SIMPLESTRING
-        resp_body = b"UNKNOWN COMMAND"
+        resp_body = b"PONG"
 
         if req_type == b"PING":
             if len(req) == 1:
@@ -127,7 +127,7 @@ class RedisServer:
             resp_body = req[1]
         elif req_type == b"SET":
             if len(req) > 3:
-                assert req[3] == b"PX"
+                assert req[3].upper() == b"PX"
                 expiry = time.time_ns() // 1_000_000 + int(req[4].decode())
             else:
                 expiry = -1

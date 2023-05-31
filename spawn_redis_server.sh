@@ -5,4 +5,5 @@
 # CodeCrafters uses this file to test your code. Don't make any changes here!
 #
 # DON'T EDIT THIS!
-exec python3 -m app.main
+# exec python3 -m app.main
+exec python3 /home/adhy/Downloads/codecrafters-redis-python/app/main.py
