@@ -1,9 +1,11 @@
 from app.redis_server import RedisServer
+import asyncio
 
-def main():
-    rs = RedisServer()
-    rs.serve()
+
+async def main():
+    rs = await RedisServer.new()
+    await rs.serve()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
