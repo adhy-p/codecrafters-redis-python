@@ -1,9 +1,8 @@
-import socket
-
+from app.redis_server import RedisServer
 
 def main():
-    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
-    server_socket.accept() # wait for client
+    rs = RedisServer()
+    rs.serve()
 
 
 if __name__ == "__main__":
