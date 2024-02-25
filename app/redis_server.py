@@ -10,6 +10,9 @@ logger = logging.getLogger("redis_server")
 
 
 class RedisServer:
+    server: asyncio.Server
+    kvstore: dict[bytes, tuple[bytes, int]]
+
     @classmethod
     async def new(cls, port: int):
         self = cls()
@@ -41,7 +44,7 @@ class RedisServer:
                 if not resp:
                     continue
                 writer.write(resp)
-                logger.info(f"replied {resp} to client")
+                logger.info(f"replied {resp!r} to client")
                 await writer.drain()
 
     def _encode_bulkstr(self, msg: bytes) -> bytes:
@@ -97,7 +100,7 @@ class RedisServer:
                     return b"-Missing argument(s) for INFO\r\n"
                 return self._handle_info(req)
             case _:
-                logger.error(f"Received {req[0]} command (not supported)!")
+                logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
 
     async def serve(self):
