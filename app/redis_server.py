@@ -12,15 +12,17 @@ logger = logging.getLogger("redis_server")
 class RedisServer:
     server: asyncio.Server
     kvstore: dict[bytes, tuple[bytes, int]]
+    master: None
 
     @classmethod
-    async def new(cls, port: int):
+    async def new(cls, port: int, master: tuple[str, int] | None = None):
         self = cls()
         self.server = await asyncio.start_server(
             self.connection_handler, "localhost", port
         )
         logger.info("creating server")
         self.kvstore = {}
+        self.master = master
         return self
 
     async def connection_handler(
@@ -76,7 +78,8 @@ class RedisServer:
         query: bytes = req[1]
         if query.upper() != b"REPLICATION":
             return b"-Currently only supporting replication for INFO command\r\n"
-        return self._encode_bulkstr(b"role:master")
+        role = b"master" if not self.master else b"slave"
+        return self._encode_bulkstr(b"role:" + role)
 
     async def handle_request(self, req: List[bytes]) -> bytes:
         assert len(req) > 0
