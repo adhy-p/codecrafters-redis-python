@@ -24,13 +24,13 @@ class RedisServer:
         self.server = await asyncio.start_server(
             self.connection_handler, "localhost", port
         )
-        logger.info("creating server")
+        logger.info("initialising server")
         self.kvstore = {}
         self.master = None
         if master:
             master_host, master_port = master
             reader, writer = await asyncio.open_connection(master_host, master_port)
-            await RedisServer.init_handshake(reader, writer)
+            await RedisServer.init_handshake(reader, writer, port)
             self.master = (master, (reader, writer))
         self.replication_id = REPLICATION_ID
         self.replication_offset = 0
@@ -38,12 +38,31 @@ class RedisServer:
 
     @staticmethod
     async def init_handshake(
-        _reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter, port: int
     ):
         PING_CMD = b"*1\r\n$4\r\nping\r\n"
-        logger.info("[slave] initialising handshake with master")
+        logger.info("[worker] initialising handshake with master")
+        logger.info("[worker] sending PING")
         writer.write(PING_CMD)
         await writer.drain()
+        _resp: bytes = await reader.read(1024)
+        logger.info(f"[worker] received {_resp!r}")
+        # ignore the server's response for now
+        # todo: check _resp == PING response
+        logger.info("[worker] sending first REPLCONF")
+        writer.write(
+            RedisServer._encode_command(
+                [b"REPLCONF", b"listening-port", RedisServer._int_to_bytestr(port)]
+            )
+        )
+        await writer.drain()
+        _resp: bytes = await reader.read(1024)
+        logger.info(f"[worker] received {_resp!r}")
+        logger.info("[worker] sending second REPLCONF")
+        writer.write(RedisServer._encode_command([b"REPLCONF", b"capa", b"psync2"]))
+        await writer.drain()
+        _resp: bytes = await reader.read(1024)
+        logger.info(f"[worker] received {_resp!r}")
 
     async def connection_handler(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -69,9 +88,20 @@ class RedisServer:
                 logger.info(f"replied {resp!r} to client")
                 await writer.drain()
 
-    def _encode_bulkstr(self, msg: bytes) -> bytes:
+    @staticmethod
+    def _int_to_bytestr(i: int) -> bytes:
+        return str(i).encode("utf-8")
+
+    @staticmethod
+    def _encode_command(args: List[bytes]) -> bytes:
+        args = [RedisServer._encode_bulkstr(msg) for msg in args]
+        arr_len = len(args)
+        return b"*" + RedisServer._int_to_bytestr(arr_len) + b"\r\n" + b"".join(args)
+
+    @staticmethod
+    def _encode_bulkstr(msg: bytes) -> bytes:
         msg_len = len(msg)
-        return b"$" + str(msg_len).encode("utf-8") + b"\r\n" + msg + b"\r\n"
+        return b"$" + RedisServer._int_to_bytestr(msg_len) + b"\r\n" + msg + b"\r\n"
 
     def _handle_info(self, req: List[bytes]) -> bytes:
         query: bytes = req[1]
@@ -80,8 +110,10 @@ class RedisServer:
         # maybe change to a dictionary once the number of fields grows
         role = b"role:" + (b"master" if not self.master else b"slave")
         repl_id = b"master_replid:" + self.replication_id
-        offset = b"master_repl_offset:" + str(self.replication_offset).encode("utf-8")
-        return self._encode_bulkstr(b"\n".join([role, repl_id, offset]))
+        offset = b"master_repl_offset:" + RedisServer._int_to_bytestr(
+            self.replication_offset
+        )
+        return RedisServer._encode_bulkstr(b"\n".join([role, repl_id, offset]))
 
     def _handle_get(self, req: List[bytes]) -> bytes:
         key: bytes = req[1]
@@ -89,7 +121,7 @@ class RedisServer:
         if value:
             msg, expiry = value
             if expiry == -1 or time.time_ns() // 1_000_000 <= expiry:
-                return self._encode_bulkstr(msg)
+                return RedisServer._encode_bulkstr(msg)
         return b"$-1\r\n"
 
     def _handle_set(self, req: List[bytes]) -> bytes:
@@ -112,7 +144,7 @@ class RedisServer:
             case b"ECHO":
                 if len(req) < 2:
                     return b"-Missing argument(s) for ECHO\r\n"
-                return self._encode_bulkstr(req[1])
+                return RedisServer._encode_bulkstr(req[1])
             case b"SET":
                 if len(req) < 3:
                     return b"-Missing argument(s) for SET\r\n"
@@ -125,6 +157,8 @@ class RedisServer:
                 if len(req) < 2:
                     return b"-Missing argument(s) for INFO\r\n"
                 return self._handle_info(req)
+            case b"REPLCONF":
+                return b"+OK\r\n"
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
