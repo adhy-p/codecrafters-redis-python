@@ -26,6 +26,7 @@ class RedisServer:
         )
         logger.info("creating server")
         self.kvstore = {}
+        self.master = None
         if master:
             master_host, master_port = master
             reader, writer = await asyncio.open_connection(master_host, master_port)
