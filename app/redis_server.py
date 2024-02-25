@@ -26,10 +26,23 @@ class RedisServer:
         )
         logger.info("creating server")
         self.kvstore = {}
-        self.master = master
+        if master:
+            master_host, master_port = master
+            reader, writer = await asyncio.open_connection(master_host, master_port)
+            await RedisServer.init_handshake(reader, writer)
+            self.master = (master, (reader, writer))
         self.replication_id = REPLICATION_ID
         self.replication_offset = 0
         return self
+
+    @staticmethod
+    async def init_handshake(
+        _reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ):
+        PING_CMD = b"*1\r\n$4\r\nping\r\n"
+        logger.info("[slave] initialising handshake with master")
+        writer.write(PING_CMD)
+        await writer.drain()
 
     async def connection_handler(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -59,6 +72,16 @@ class RedisServer:
         msg_len = len(msg)
         return b"$" + str(msg_len).encode("utf-8") + b"\r\n" + msg + b"\r\n"
 
+    def _handle_info(self, req: List[bytes]) -> bytes:
+        query: bytes = req[1]
+        if query.upper() != b"REPLICATION":
+            return b"-Currently only supporting replication for INFO command\r\n"
+        # maybe change to a dictionary once the number of fields grows
+        role = b"role:" + (b"master" if not self.master else b"slave")
+        repl_id = b"master_replid:" + self.replication_id
+        offset = b"master_repl_offset:" + str(self.replication_offset).encode("utf-8")
+        return self._encode_bulkstr(b"\n".join([role, repl_id, offset]))
+
     def _handle_get(self, req: List[bytes]) -> bytes:
         key: bytes = req[1]
         value: Tuple[bytes, int] | None = self.kvstore.get(key)
@@ -79,17 +102,6 @@ class RedisServer:
             expiry = time.time_ns() // 1_000_000 + int(req[4].decode())
         self.kvstore[key] = (val, expiry)
         return b"+OK\r\n"
-
-    def _handle_info(self, req: List[bytes]) -> bytes:
-        query: bytes = req[1]
-        if query.upper() != b"REPLICATION":
-            return b"-Currently only supporting replication for INFO command\r\n"
-        # maybe change to a dictionary once the number of fields grows
-        role = b"role:" + (b"master" if not self.master else b"slave")
-        print(self.replication_id, type(self.replication_id))
-        repl_id = b"master_replid:" + self.replication_id
-        offset = b"master_repl_offset:" + str(self.replication_offset).encode("utf-8")
-        return self._encode_bulkstr(b"\n".join([role, repl_id, offset]))
 
     async def handle_request(self, req: List[bytes]) -> bytes:
         assert len(req) > 0
