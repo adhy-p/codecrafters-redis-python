@@ -85,7 +85,7 @@ class RedisServer:
                             + msg
                             + b"\r\n"
                         )
-                return b"-1\r\n"
+                return b"$-1\r\n"
             case _:
                 logger.error(f"Received {req[0]} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
