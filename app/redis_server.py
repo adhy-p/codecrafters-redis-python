@@ -69,23 +69,33 @@ class RedisServer:
         self.kvstore[key] = (val, expiry)
         return b"+OK\r\n"
 
+    def _handle_info(self, req: List[bytes]) -> bytes:
+        query: bytes = req[1]
+        if query.upper() != b"REPLICATION":
+            return b"-Currently only supporting replication for INFO command\r\n"
+        return self._encode_bulkstr(b"role:master")
+
     async def handle_request(self, req: List[bytes]) -> bytes:
         assert len(req) > 0
         match req[0].upper():
             case b"PING":
                 return b"+PONG\r\n"
             case b"ECHO":
-                if len(req) < 1:
+                if len(req) < 2:
                     return b"-Missing argument(s) for ECHO\r\n"
                 return self._encode_bulkstr(req[1])
             case b"SET":
-                if len(req) < 2:
+                if len(req) < 3:
                     return b"-Missing argument(s) for SET\r\n"
                 return self._handle_set(req)
             case b"GET":
                 if len(req) < 2:
                     return b"-Missing argument(s) for GET\r\n"
                 return self._handle_get(req)
+            case b"INFO":
+                if len(req) < 2:
+                    return b"-Missing argument(s) for INFO\r\n"
+                return self._handle_info(req)
             case _:
                 logger.error(f"Received {req[0]} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
