@@ -8,11 +8,15 @@ from typing import List, Tuple
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("redis_server")
 
+REPLICATION_ID = b"8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
+
 
 class RedisServer:
     server: asyncio.Server
     kvstore: dict[bytes, tuple[bytes, int]]
     master: None
+    replication_id: bytes
+    replication_offset: int
 
     @classmethod
     async def new(cls, port: int, master: tuple[str, int] | None = None):
@@ -23,6 +27,8 @@ class RedisServer:
         logger.info("creating server")
         self.kvstore = {}
         self.master = master
+        self.replication_id = REPLICATION_ID
+        self.replication_offset = 0
         return self
 
     async def connection_handler(
@@ -78,8 +84,12 @@ class RedisServer:
         query: bytes = req[1]
         if query.upper() != b"REPLICATION":
             return b"-Currently only supporting replication for INFO command\r\n"
-        role = b"master" if not self.master else b"slave"
-        return self._encode_bulkstr(b"role:" + role)
+        # maybe change to a dictionary once the number of fields grows
+        role = b"role:" + (b"master" if not self.master else b"slave")
+        print(self.replication_id, type(self.replication_id))
+        repl_id = b"master_replid:" + self.replication_id
+        offset = b"master_repl_offset:" + str(self.replication_offset).encode("utf-8")
+        return self._encode_bulkstr(b"\n".join([role, repl_id, offset]))
 
     async def handle_request(self, req: List[bytes]) -> bytes:
         assert len(req) > 0
