@@ -13,13 +13,14 @@ class RedisServer:
     async def new(cls):
         self = cls()
         self.server = await asyncio.start_server(
-            RedisServer.connection_handler, "localhost", 6379
+            self.connection_handler, "localhost", 6379
         )
         logger.info("creating server")
+        self.kvstore = {}
         return self
 
     async def connection_handler(
-        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ):
         while True:
             data: bytes = await reader.read(1024)
@@ -35,14 +36,14 @@ class RedisServer:
             if requests:
                 logger.info(f"received {requests!r} from {addr!r}")
             for req in requests:
-                resp = await RedisServer.handle_request(req)
+                resp = await self.handle_request(req)
                 if not resp:
                     continue
                 writer.write(resp)
                 logger.info(f"replied {resp} to client")
                 await writer.drain()
 
-    async def handle_request(req: List[bytes]) -> bytes:
+    async def handle_request(self, req: List[bytes]) -> bytes:
         assert len(req) > 0
         match req[0].upper():
             case b"PING":
@@ -51,6 +52,18 @@ class RedisServer:
                 msg: bytes = req[1]
                 msg_len = len(msg)
                 return b"$" + str(msg_len).encode("utf-8") + b"\r\n" + msg + b"\r\n"
+            case b"SET":
+                key: bytes = req[1]
+                val: bytes = req[2]
+                self.kvstore[key] = val
+                return b"+OK\r\n"
+            case b"GET":
+                key: bytes = req[1]
+                if key in self.kvstore:
+                    msg: bytes = self.kvstore[key]
+                    msg_len = len(msg)
+                    return b"$" + str(msg_len).encode("utf-8") + b"\r\n" + msg + b"\r\n"
+                return b"-1\r\n"
             case _:
                 logger.error(f"{req[0]} not implemented yet!")
                 return b"+PONG\r\n"
