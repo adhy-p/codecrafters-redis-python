@@ -47,7 +47,7 @@ class RespParser:
         arr_len = int(arr_len)
         arr = []
         for i in range(arr_len):
-            print("remaining request:", req)
+            logger.debug("remaining request:", req)
             cmd, req = RespParser._parse_request(req)
             arr.append(cmd)
         return (arr, req)

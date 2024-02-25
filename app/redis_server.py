@@ -23,8 +23,15 @@ class RedisServer:
     ):
         while True:
             data: bytes = await reader.read(1024)
-            requests = RespParser.parse_request(data)
             addr: str = writer.get_extra_info("peername")
+
+            if not data:
+                logger.info(f"closing connection with {addr}")
+                writer.close()
+                await writer.wait_closed()
+                return
+
+            requests = RespParser.parse_request(data)
             if requests:
                 logger.info(f"received {requests!r} from {addr!r}")
             for req in requests:
