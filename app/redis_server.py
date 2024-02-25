@@ -11,10 +11,10 @@ logger = logging.getLogger("redis_server")
 
 class RedisServer:
     @classmethod
-    async def new(cls):
+    async def new(cls, port: int):
         self = cls()
         self.server = await asyncio.start_server(
-            self.connection_handler, "localhost", 6379
+            self.connection_handler, "localhost", port
         )
         logger.info("creating server")
         self.kvstore = {}
@@ -44,6 +44,31 @@ class RedisServer:
                 logger.info(f"replied {resp} to client")
                 await writer.drain()
 
+    def _encode_bulkstr(self, msg: bytes) -> bytes:
+        msg_len = len(msg)
+        return b"$" + str(msg_len).encode("utf-8") + b"\r\n" + msg + b"\r\n"
+
+    def _handle_get(self, req: List[bytes]) -> bytes:
+        key: bytes = req[1]
+        value: Tuple[bytes, int] | None = self.kvstore.get(key)
+        if value:
+            msg, expiry = value
+            if expiry == -1 or time.time_ns() // 1_000_000 <= expiry:
+                return self._encode_bulkstr(msg)
+        return b"$-1\r\n"
+
+    def _handle_set(self, req: List[bytes]) -> bytes:
+        key: bytes = req[1]
+        val: bytes = req[2]
+        expiry: int = -1
+        if len(req) > 3:
+            precision: bytes = req[3]
+            if precision.upper() != b"PX":
+                return b"-Currently only supporting PX for SET timeout\r\n"
+            expiry = time.time_ns() // 1_000_000 + int(req[4].decode())
+        self.kvstore[key] = (val, expiry)
+        return b"+OK\r\n"
+
     async def handle_request(self, req: List[bytes]) -> bytes:
         assert len(req) > 0
         match req[0].upper():
@@ -52,40 +77,15 @@ class RedisServer:
             case b"ECHO":
                 if len(req) < 1:
                     return b"-Missing argument(s) for ECHO\r\n"
-                msg: bytes = req[1]
-                msg_len = len(msg)
-                return b"$" + str(msg_len).encode("utf-8") + b"\r\n" + msg + b"\r\n"
+                return self._encode_bulkstr(req[1])
             case b"SET":
                 if len(req) < 2:
                     return b"-Missing argument(s) for SET\r\n"
-                key: bytes = req[1]
-                val: bytes = req[2]
-                expiry: int = -1
-                if len(req) > 3:
-                    precision: bytes = req[3]
-                    if precision.upper() != b"PX":
-                        return b"-Currently only supporting PX for SET timeout\r\n"
-                    expiry = time.time_ns() // 1_000_000 + int(req[4].decode())
-                self.kvstore[key] = (val, expiry)
-                return b"+OK\r\n"
+                return self._handle_set(req)
             case b"GET":
                 if len(req) < 2:
                     return b"-Missing argument(s) for GET\r\n"
-                key: bytes = req[1]
-                self.kvstore.get
-                value: Tuple[bytes, int] | None = self.kvstore.get(key)
-                if value:
-                    msg, expiry = value
-                    if expiry == -1 or time.time_ns() // 1_000_000 <= expiry:
-                        msg_len = len(msg)
-                        return (
-                            b"$"
-                            + str(msg_len).encode("utf-8")
-                            + b"\r\n"
-                            + msg
-                            + b"\r\n"
-                        )
-                return b"$-1\r\n"
+                return self._handle_get(req)
             case _:
                 logger.error(f"Received {req[0]} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
