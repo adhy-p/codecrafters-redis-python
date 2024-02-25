@@ -16,11 +16,13 @@ class RedisServer:
         return self
 
     @classmethod
-    async def connection_handler(cls, reader, writer):
+    async def connection_handler(
+        cls, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ):
         while True:
-            data = await reader.read(1024)
-            message = data.decode()
-            addr = writer.get_extra_info("peername")
+            data: bytes = await reader.read(1024)
+            message: str = data.decode()
+            addr: str = writer.get_extra_info("peername")
             logger.info(f"received {message!r} from {addr!r}")
             writer.write(b"+PONG\r\n")
             logger.info("replied PONG to client")
