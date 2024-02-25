@@ -61,7 +61,7 @@ class RedisServer:
                 key: bytes = req[1]
                 val: bytes = req[2]
                 expiry: int = -1
-                if len(req) > 2:
+                if len(req) > 3:
                     precision: bytes = req[3]
                     if precision.upper() != b"PX":
                         return b"-Currently only supporting PX for SET timeout\r\n"
