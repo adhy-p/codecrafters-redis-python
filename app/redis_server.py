@@ -113,6 +113,21 @@ class RedisServer:
         msg_len = len(msg)
         return b"$" + RedisServer._int_to_bytestr(msg_len) + b"\r\n" + msg + b"\r\n"
 
+    def _handle_psync(self) -> bytes:
+        EMPTY_RDB = "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2"
+        rdb_file = RedisServer._encode_bulkstr(bytes.fromhex(EMPTY_RDB)).rstrip(
+            b"\r\n"
+        )  # rdb does not contain a \r\n at the end
+
+        return (
+            b"+FULLRESYNC "
+            + self.replication_id
+            + b" "
+            + RedisServer._int_to_bytestr(0)
+            + b"\r\n"
+            + rdb_file
+        )
+
     def _handle_info(self, req: List[bytes]) -> bytes:
         query: bytes = req[1]
         if query.upper() != b"REPLICATION":
@@ -170,13 +185,7 @@ class RedisServer:
             case b"REPLCONF":
                 return b"+OK\r\n"
             case b"PSYNC":
-                return (
-                    b"+FULLRESYNC "
-                    + self.replication_id
-                    + b" "
-                    + RedisServer._int_to_bytestr(0)
-                    + b"\r\n"
-                )
+                return self._handle_psync()
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
