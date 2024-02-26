@@ -204,11 +204,19 @@ class RedisServer:
     async def propagate_cmds(self, req: List[bytes]):
         command = RedisServer._encode_command(req)
         logger.info(f"sending {command!r} to all replicas")
-        for _reader, writer in self.workers:
+        dead_workers = []
+        for reader, writer in self.workers:
             addr: str = writer.get_extra_info("peername")
             logger.info(f"sending to replica {addr}")
-            writer.write(command)
-            await writer.drain()
+            try:
+                writer.write(command)
+                await writer.drain()
+            except ConnectionResetError:
+                logger.info("worker closed the connection. remove from worker list")
+                dead_workers.append((reader, writer))
+        # clean up dead workers
+        for w in dead_workers:
+            self.workers.remove(w)
 
     async def handle_request(
         self,
