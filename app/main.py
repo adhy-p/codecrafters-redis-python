@@ -1,4 +1,4 @@
-from app.redis_server import RedisServer
+from app.redis_server import RedisMasterServer, RedisWorkerServer
 import asyncio
 import argparse
 
@@ -10,9 +10,9 @@ async def main():
     args = arg_parser.parse_args()
     if args.replicaof:
         host, port = args.replicaof
-        rs = await RedisServer.new(args.port, (host, int(port)))
+        rs = await RedisWorkerServer.new(args.port, (host, int(port)))
     else:
-        rs = await RedisServer.new(args.port)
+        rs = await RedisMasterServer.new(args.port)
     await rs.serve()
 
 
