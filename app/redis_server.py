@@ -198,8 +198,7 @@ class RedisMasterServer(RedisServer):
 
         self.workers.add((reader, writer))
 
-        # a bit ugly, refactor later
-        writer.write(
+        return (
             b"+FULLRESYNC "
             + self.replication_id
             + b" "
@@ -207,10 +206,6 @@ class RedisMasterServer(RedisServer):
             + b"\r\n"
             + rdb_file
         )
-        await writer.drain()
-
-        # return RedisServer._encode_command([b"REPLCONF", b"GETACK", b"*"])
-        return b""
 
     def _handle_info(self, req: List[bytes]) -> bytes:
         return super()._handle_info(b"role:master", req)
