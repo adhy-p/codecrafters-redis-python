@@ -147,7 +147,7 @@ class RedisServer(abc.ABC):
                     return b"-Missing argument(s) for REPLCONF\r\n"
                 return self._handle_replconf(req)
             case b"PSYNC":
-                return self._handle_psync(reader, writer)
+                return await self._handle_psync(reader, writer)
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
@@ -188,7 +188,7 @@ class RedisMasterServer(RedisServer):
         for w in dead_workers:
             self.workers.remove(w)
 
-    def _handle_psync(
+    async def _handle_psync(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> bytes:
         EMPTY_RDB = "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2"
@@ -197,15 +197,19 @@ class RedisMasterServer(RedisServer):
         )  # rdb does not contain a \r\n at the end
 
         self.workers.add((reader, writer))
-        return (
+
+        # a bit ugly, refactor later
+        writer.write(
             b"+FULLRESYNC "
             + self.replication_id
             + b" "
             + RedisServer._int_to_bytestr(0)
             + b"\r\n"
             + rdb_file
-            + RedisServer._encode_command([b"REPLCONF", b"GETACK", b"*"])
         )
+        await writer.drain()
+
+        return RedisServer._encode_command([b"REPLCONF", b"GETACK", b"*"])
 
     def _handle_info(self, req: List[bytes]) -> bytes:
         return super()._handle_info(b"role:master", req)
