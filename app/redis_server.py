@@ -209,7 +209,8 @@ class RedisMasterServer(RedisServer):
         )
         await writer.drain()
 
-        return RedisServer._encode_command([b"REPLCONF", b"GETACK", b"*"])
+        # return RedisServer._encode_command([b"REPLCONF", b"GETACK", b"*"])
+        return b""
 
     def _handle_info(self, req: List[bytes]) -> bytes:
         return super()._handle_info(b"role:master", req)
