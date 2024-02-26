@@ -227,8 +227,8 @@ class RedisWorkerServer(RedisServer):
         logger.info("initialising worker server...")
         self.kvstore = {}
         self.workers = set()
-        self.replication_id = REPLICATION_ID
-        self.replication_offset = 0
+        self.replication_id = b"?"
+        self.replication_offset = -1
         self.master = await self._init_handshake(master, port)
         return self
 
