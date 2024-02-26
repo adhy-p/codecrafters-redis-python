@@ -64,6 +64,16 @@ class RedisServer:
         _resp: bytes = await reader.read(1024)
         logger.info(f"[worker] received {_resp!r}")
 
+        logger.info("[worker] sending PSYNC")
+        writer.write(
+            RedisServer._encode_command(
+                [b"PSYNC", b"?", RedisServer._int_to_bytestr(-1)]
+            )
+        )
+        await writer.drain()
+        _resp: bytes = await reader.read(1024)
+        logger.info(f"[worker] received {_resp!r}")
+
     async def connection_handler(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ):
@@ -159,6 +169,14 @@ class RedisServer:
                 return self._handle_info(req)
             case b"REPLCONF":
                 return b"+OK\r\n"
+            case b"PSYNC":
+                return (
+                    b"+FULLRESYNC "
+                    + self.replication_id
+                    + b" "
+                    + RedisServer._int_to_bytestr(0)
+                    + b"\r\n"
+                )
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
