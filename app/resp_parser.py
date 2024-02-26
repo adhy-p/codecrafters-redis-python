@@ -13,7 +13,7 @@ AGGREGATE_RESP = Union[List[SIMPLE_RESP], List["AGGREGATE_RESP"]]
 
 class RespParser:
     @staticmethod
-    def parse_request(req: bytes) -> List[AGGREGATE_RESP]:
+    def parse_request(req: bytes) -> tuple[List[AGGREGATE_RESP], List[int]]:
         """
         receives stream of bytes that represents a redis command
         a command is represented by an array of bulk strings.
@@ -27,13 +27,15 @@ class RespParser:
         ]
         """
         parsed_cmds = []
+        request_lens = []
         while req:
-            cmd, req = RespParser.parse_array(req)
+            cmd, consumed_req_len, req = RespParser._parse_request(req)
             parsed_cmds.append(cmd)
-        return parsed_cmds
+            request_lens.append(consumed_req_len)
+        return (parsed_cmds, request_lens)
 
     @staticmethod
-    def _parse_request(req: bytes) -> tuple[SIMPLE_RESP | AGGREGATE_RESP, bytes]:
+    def _parse_request(req: bytes) -> tuple[SIMPLE_RESP | AGGREGATE_RESP, int, bytes]:
         match req[:1]:
             case b"+":
                 return RespParser.parse_simplestr(req)
@@ -43,28 +45,33 @@ class RespParser:
                 return RespParser.parse_array(req)
             case _:
                 logger.info(f"Invalid resp type. Request: {req!r}")
-                return (b"", req)
+                return (b"", 0, req)
 
     @staticmethod
-    def parse_simplestr(req: bytes) -> tuple[SIMPLE_RESP, bytes]:
+    def parse_simplestr(req: bytes) -> tuple[SIMPLE_RESP, int, bytes]:
         # simply returns the data without the type byte and <CR>
         # return [data[1:-2]]
         assert req[:1] == b"+"
+        original_len = len(req)
         req = req.lstrip(b"+")
         data, remain = req.split(b"\r\n", maxsplit=1)
-        return (data, remain)
+        parsed_len = original_len - len(remain)
+        return (data, parsed_len, remain)
 
     @staticmethod
-    def parse_bulkstr(req: bytes) -> tuple[SIMPLE_RESP, bytes]:
+    def parse_bulkstr(req: bytes) -> tuple[SIMPLE_RESP, int, bytes]:
         assert req[:1] == b"$"
+        original_len = len(req)
         req = req.lstrip(b"$")
         (length, data, remain) = req.split(b"\r\n", maxsplit=2)
         assert int(length) == len(data)
-        return (data, remain)
+        parsed_len = original_len - len(remain)
+        return (data, parsed_len, remain)
 
     @staticmethod
-    def parse_array(req) -> tuple[AGGREGATE_RESP, bytes]:
+    def parse_array(req) -> tuple[AGGREGATE_RESP, int, bytes]:
         assert req[:1] == b"*"
+        original_len = len(req)
         req = req.lstrip(b"*")
         remain: bytes
         arr_len, remain = req.split(b"\r\n", maxsplit=1)
@@ -72,6 +79,7 @@ class RespParser:
         arr: List[SIMPLE_RESP | AGGREGATE_RESP] = []
         for i in range(arr_len):
             logger.debug("remaining request:", remain)
-            cmd, remain = RespParser._parse_request(remain)
+            cmd, _, remain = RespParser._parse_request(remain)
             arr.append(cmd)
-        return (arr, remain)
+        parsed_len = original_len - len(remain)
+        return (arr, parsed_len, remain)

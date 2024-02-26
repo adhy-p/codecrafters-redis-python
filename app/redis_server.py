@@ -32,10 +32,10 @@ class RedisServer(abc.ABC):
                 await writer.wait_closed()
                 return
 
-            requests = RespParser.parse_request(data)
-            if requests:
-                logger.info(f"received {requests!r} from {addr!r}")
-            for req in requests:
+            parsed_requests, _ = RespParser.parse_request(data)
+            if parsed_requests:
+                logger.info(f"received {parsed_requests!r} from {addr!r}")
+            for req in parsed_requests:
                 resp = await self.handle_request(req, reader, writer)
                 if not resp:
                     continue
@@ -279,6 +279,7 @@ class RedisWorkerServer(RedisServer):
         logger.info(f"[worker] received {_resp!r}")
 
         # todo: use the appropriate command handler
+        self.replication_offset = 0
         ack = b"*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n"
         writer.write(ack)
         await writer.drain()
@@ -296,11 +297,13 @@ class RedisWorkerServer(RedisServer):
                 await writer.wait_closed()
                 return
 
-            requests = RespParser.parse_request(data)
-            if requests:
-                logger.info(f"received {requests!r} from {addr!r}")
-            for req in requests:
+            parsed_requests, orig_req_len = RespParser.parse_request(data)
+            if parsed_requests:
+                logger.info(f"received {parsed_requests!r} from {addr!r}")
+            for req, req_len in zip(parsed_requests, orig_req_len):
                 resp = await self.handle_master_request(req)
+                if self.replication_offset != -1:
+                    self.replication_offset += req_len
                 if not resp:
                     continue
                 writer.write(resp)
@@ -316,6 +319,8 @@ class RedisWorkerServer(RedisServer):
     ) -> bytes:
         assert len(req) > 0
         match req[0].upper():
+            case b"PING":
+                return b"+PONG\r\n"
             case b"SET":
                 if len(req) < 3:
                     return b"-Missing argument(s) for SET\r\n"
