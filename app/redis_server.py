@@ -283,10 +283,22 @@ class RedisWorkerServer(RedisServer):
         assert cmd_type == b"FULLRESYNC"
         self.replication_id = id
         self.replication_offset = int(offset)
+
+        # there's no specification on when the server will send the rdb file
+        # after sending the FULLRESYNC command. It can be sent together in a
+        # single write() call, or sent separately.
+
+        # check if there's any remaining data. if so, parse it.
+        # else, read again from the socket
+        # for now, assume that the whole rdb file fits to the buffer (1024 bytes)
+        # and can be read using a single read() call
         logger.info(f"rdb file request: {remain!r}")
-        rdb_file, _length, remain = RespParser.parse_rdb(remain)
+        data = remain if remain else await reader.read(1024)
+        rdb_file, _length, remain = RespParser.parse_rdb(data)
         logger.info(f"rdb file: {rdb_file!r}")
 
+        # process requests that comes together with the rdb file, if any
+        # todo: maybe refactor this to another function
         if remain:
             parsed_requests, orig_req_len = RespParser.parse_request(remain)
             for req, req_len in zip(parsed_requests, orig_req_len):
