@@ -329,6 +329,7 @@ class RedisWorkerServer(RedisServer):
             if parsed_requests:
                 logger.info(f"received {parsed_requests!r} from master@{addr!r}")
             for req, req_len in zip(parsed_requests, orig_req_len):
+                logger.info(f"handling request: {req!r}")
                 resp = await self.handle_master_request(req)
                 logger.info("checking replication offset...")
                 assert self.replication_offset != -1
