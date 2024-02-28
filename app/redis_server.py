@@ -327,11 +327,13 @@ class RedisWorkerServer(RedisServer):
 
             parsed_requests, orig_req_len = RespParser.parse_request(data)
             if parsed_requests:
-                logger.info(f"received {parsed_requests!r} from {addr!r}")
+                logger.info(f"received {parsed_requests!r} from master@{addr!r}")
             for req, req_len in zip(parsed_requests, orig_req_len):
                 resp = await self.handle_master_request(req)
-                if self.replication_offset != -1:
-                    self.replication_offset += req_len
+                logger.info("checking replication offset...")
+                assert self.replication_offset != -1
+                self.replication_offset += req_len
+                logger.info(f"updating replication offset to {self.replication_offset}")
                 if not resp:
                     continue
                 writer.write(resp)
