@@ -287,6 +287,7 @@ class RedisWorkerServer(RedisServer):
         logger.info(
             f"rep id and offset: {self.replication_id!r}, {self.replication_offset}"
         )
+        logger.info(f"rdb file request: {remain!r}")
         rdb_file, _length, remain = RespParser.parse_rdb(remain)
         logger.info(f"rdb file: {rdb_file!r}")
         return (reader, writer)

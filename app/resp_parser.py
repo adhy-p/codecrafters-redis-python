@@ -93,4 +93,7 @@ class RespParser:
         length = int(length)
         (data, remain) = (remain[:length], remain[length:])
         parsed_len = original_len - len(remain)
+        logger.info(
+            f"parse_rdb: data, parsed, remain: {data!r}, {parsed_len!r}, {remain!r}"
+        )
         return (data, parsed_len, remain)
