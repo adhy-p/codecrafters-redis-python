@@ -298,19 +298,8 @@ class RedisWorkerServer(RedisServer):
         logger.info(f"rdb file: {rdb_file!r}")
 
         # process requests that comes together with the rdb file, if any
-        # todo: maybe refactor this to another function
         if remain:
-            parsed_requests, orig_req_len = RespParser.parse_request(remain)
-            for req, req_len in zip(parsed_requests, orig_req_len):
-                resp = await self.handle_master_request(req)
-                if self.replication_offset != -1:
-                    self.replication_offset += req_len
-                if not resp:
-                    continue
-                writer.write(resp)
-                logger.info(f"replied {resp!r} to master")
-                await writer.drain()
-
+            await self._parse_and_handle_request(remain, reader, writer)
         return (reader, writer)
 
     async def listen_to_master(self):
@@ -324,25 +313,32 @@ class RedisWorkerServer(RedisServer):
                 writer.close()
                 await writer.wait_closed()
                 return
+            await self._parse_and_handle_request(data, reader, writer)
 
-            parsed_requests, orig_req_len = RespParser.parse_request(data)
-            if parsed_requests:
-                logger.info(f"received requests from master@{addr!r}")
-                logger.info(parsed_requests, orig_req_len)
-            for req, req_len in zip(parsed_requests, orig_req_len):
-                logger.info(f"handling request: {req!r}")
-                resp = await self.handle_master_request(req)
-                logger.info("checking replication offset...")
-                assert self.replication_offset != -1
-                self.replication_offset += req_len
-                logger.info(f"updating replication offset to {self.replication_offset}")
-                logger.info(f"prepared reply: {resp!r}")
-                if not resp:
-                    continue
-                logger.info("sending reply")
-                writer.write(resp)
-                logger.info(f"replied {resp!r} to master")
-                await writer.drain()
+    async def _parse_and_handle_request(
+        self,
+        req: List[bytes],
+        _reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> bytes:
+        parsed_requests, orig_req_len = RespParser.parse_request(req)
+        if parsed_requests:
+            logger.info("received requests")
+            logger.info(f"{parsed_requests!r}, {orig_req_len!r}")
+        for req, req_len in zip(parsed_requests, orig_req_len):
+            logger.info(f"handling request: {req!r}")
+            resp = await self.handle_master_request(req)
+            logger.info("checking replication offset...")
+            assert self.replication_offset != -1
+            self.replication_offset += req_len
+            logger.info(f"updating replication offset to {self.replication_offset}")
+            logger.info(f"prepared reply: {resp!r}")
+            if not resp:
+                continue
+            logger.info("sending reply")
+            writer.write(resp)
+            logger.info(f"replied {resp!r} to master")
+            await writer.drain()
 
     def _handle_info(self, req: List[bytes]) -> bytes:
         return super()._handle_info(b"role:slave", req)
