@@ -290,6 +290,16 @@ class RedisWorkerServer(RedisServer):
         logger.info(f"rdb file request: {remain!r}")
         rdb_file, _length, remain = RespParser.parse_rdb(remain)
         logger.info(f"rdb file: {rdb_file!r}")
+        if remain:
+            parsed_requests = RespParser.parse_request(remain)
+            for req in parsed_requests:
+                resp = await self.handle_request(req, reader, writer)
+                if not resp:
+                    continue
+                writer.write(resp)
+                logger.info(f"replied {resp!r} to client")
+                await writer.drain()
+
         return (reader, writer)
 
     async def listen_to_master(self):
