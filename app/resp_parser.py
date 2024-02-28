@@ -89,7 +89,7 @@ class RespParser:
         assert req[:1] == b"$"
         original_len = len(req)
         req = req.lstrip(b"$")
-        (length, remain) = req.split(b"\r\n")
+        (length, remain) = req.split(b"\r\n", maxsplit=1)
         length = int(length)
         (data, remain) = (remain[:length], remain[length:])
         parsed_len = original_len - len(remain)
