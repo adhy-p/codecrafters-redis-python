@@ -327,7 +327,8 @@ class RedisWorkerServer(RedisServer):
 
             parsed_requests, orig_req_len = RespParser.parse_request(data)
             if parsed_requests:
-                logger.info(f"received {parsed_requests!r} from master@{addr!r}")
+                logger.info(f"received requests from master@{addr!r}")
+                logger.info(parsed_requests, orig_req_len)
             for req, req_len in zip(parsed_requests, orig_req_len):
                 logger.info(f"handling request: {req!r}")
                 resp = await self.handle_master_request(req)
@@ -335,8 +336,10 @@ class RedisWorkerServer(RedisServer):
                 assert self.replication_offset != -1
                 self.replication_offset += req_len
                 logger.info(f"updating replication offset to {self.replication_offset}")
+                logger.info(f"prepared reply: {resp!r}")
                 if not resp:
                     continue
+                logger.info("sending reply")
                 writer.write(resp)
                 logger.info(f"replied {resp!r} to master")
                 await writer.drain()
