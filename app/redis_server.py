@@ -349,8 +349,6 @@ class RedisWorkerServer(RedisServer):
     ) -> bytes:
         assert len(req) > 0
         match req[0].upper():
-            case b"PING":
-                return b"+PONG\r\n"
             case b"SET":
                 if len(req) < 3:
                     return b"-Missing argument(s) for SET\r\n"
@@ -362,7 +360,7 @@ class RedisWorkerServer(RedisServer):
                 return self._handle_replconf(req)
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
-                return b"-Command not supported yet!\r\n"
+                return b""
 
     async def serve(self):
         async with self.server:
