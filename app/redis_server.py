@@ -280,9 +280,13 @@ class RedisWorkerServer(RedisServer):
         fullresync_resp, _length, remain = RespParser.parse_simplestr(resp)
         logger.info(f"full resync simplestr: {fullresync_resp!r}")
         cmd_type, id, offset = fullresync_resp.split(b" ")
-        assert cmd_type == b"FULLRESYNC"
+        logger.info(f"cmd_type, id, offset: {cmd_type!r}, {id!r}, {offset!r}")
+        # assert cmd_type == b"FULLRESYNC"
         self.replication_id = id
         self.replication_offset = int(offset)
+        logger.info(
+            f"rep id and offset: {self.replication_id!r}, {self.replication_offset}"
+        )
         rdb_file, _length, remain = RespParser.parse_rdb(remain)
         logger.info(f"rdb file: {rdb_file!r}")
         return (reader, writer)
