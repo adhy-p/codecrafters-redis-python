@@ -83,3 +83,14 @@ class RespParser:
             arr.append(cmd)
         parsed_len = original_len - len(remain)
         return (arr, parsed_len, remain)
+
+    @staticmethod
+    def parse_rdb(req: bytes) -> tuple[SIMPLE_RESP, int, bytes]:
+        assert req[:1] == b"$"
+        original_len = len(req)
+        req = req.lstrip(b"$")
+        (length, remain) = req.split(b"\r\n")
+        length = int(length)
+        (data, remain) = (remain[:length], remain[length:])
+        parsed_len = original_len - len(remain)
+        return (data, parsed_len, remain)

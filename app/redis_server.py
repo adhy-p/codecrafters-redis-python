@@ -275,14 +275,16 @@ class RedisWorkerServer(RedisServer):
             )
         )
         await writer.drain()
-        _resp: bytes = await reader.read(1024)
+        resp: bytes = await reader.read(1024)
         logger.info(f"[worker] received {_resp!r}")
-
-        # todo: use the appropriate command handler
-        self.replication_offset = 0
-        ack = b"*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n"
-        writer.write(ack)
-        await writer.drain()
+        fullresync_resp, _length, remain = RespParser.parse_simplestr(resp)
+        logger.info(f"full resync simplestr: {fullresync_resp!r}")
+        cmd_type, id, offset = fullresync_resp.split(b" ")
+        assert cmd_type == b"FULLRESYNC"
+        self.replication_id = id
+        self.replication_offset = int(offset)
+        rdb_file, _length, remain = RespParser.parse_rdb(remain)
+        logger.info(f"rdb file: {rdb_file!r}")
         return (reader, writer)
 
     async def listen_to_master(self):
