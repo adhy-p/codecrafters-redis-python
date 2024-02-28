@@ -280,24 +280,23 @@ class RedisWorkerServer(RedisServer):
         fullresync_resp, _length, remain = RespParser.parse_simplestr(resp)
         logger.info(f"full resync simplestr: {fullresync_resp!r}")
         cmd_type, id, offset = fullresync_resp.split(b" ")
-        logger.info(f"cmd_type, id, offset: {cmd_type!r}, {id!r}, {offset!r}")
-        # assert cmd_type == b"FULLRESYNC"
+        assert cmd_type == b"FULLRESYNC"
         self.replication_id = id
         self.replication_offset = int(offset)
-        logger.info(
-            f"rep id and offset: {self.replication_id!r}, {self.replication_offset}"
-        )
         logger.info(f"rdb file request: {remain!r}")
         rdb_file, _length, remain = RespParser.parse_rdb(remain)
         logger.info(f"rdb file: {rdb_file!r}")
+
         if remain:
-            parsed_requests = RespParser.parse_request(remain)
-            for req in parsed_requests:
-                resp = await self.handle_request(req, reader, writer)
+            parsed_requests, orig_req_len = RespParser.parse_request(remain)
+            for req, req_len in zip(parsed_requests, orig_req_len):
+                resp = await self.handle_master_request(req)
+                if self.replication_offset != -1:
+                    self.replication_offset += req_len
                 if not resp:
                     continue
                 writer.write(resp)
-                logger.info(f"replied {resp!r} to client")
+                logger.info(f"replied {resp!r} to master")
                 await writer.drain()
 
         return (reader, writer)
