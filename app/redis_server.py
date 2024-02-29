@@ -97,12 +97,7 @@ class RedisServer(abc.ABC):
             [v for v in self.workers.values() if v == self.replication_offset]
         )
         if num_acks < min_acks:
-            event = asyncio.Event()
-            await asyncio.gather(
-                asyncio.to_thread(self._wait_acks, min_acks, event),
-                self._trigger_timeout(timeout_ms, event),
-            )
-            await event.wait()
+            await asyncio.sleep(timeout_ms / 1000)
             num_acks = len(
                 [v for v in self.workers.values() if v == self.replication_offset]
             )
