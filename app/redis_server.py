@@ -62,7 +62,7 @@ class RedisServer(abc.ABC):
         return b""
 
     async def _trigger_timeout(self, timeout_ms: int, callback_event: asyncio.Event):
-        asyncio.sleep(timeout_ms / 1000)
+        await asyncio.sleep(timeout_ms / 1000)
         callback_event.set()
 
     async def _wait_acks(self, num_min_acks: int, callback_event: asyncio.Event):
