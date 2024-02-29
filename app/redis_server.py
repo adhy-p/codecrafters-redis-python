@@ -282,15 +282,16 @@ class RedisWorkerServer(RedisServer):
         self.workers = set()
         self.replication_id = b"?"
         self.replication_offset = -1
-        self.master = await self._init_handshake(master, port)
+
+        master_host, master_port = master
+        reader, writer = await asyncio.open_connection(master_host, master_port)
+        self.master = (reader, writer)
+        await self._init_handshake(reader, writer, port)
         return self
 
     async def _init_handshake(
-        self, master: tuple[str, int], port: int
-    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        master_host, master_port = master
-        reader, writer = await asyncio.open_connection(master_host, master_port)
-
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, port: int
+    ):
         PING_CMD = b"*1\r\n$4\r\nping\r\n"
         logger.info("[worker] initialising handshake with master")
         logger.info("[worker] sending PING")
@@ -353,7 +354,6 @@ class RedisWorkerServer(RedisServer):
         # process requests that comes together with the rdb file, if any
         if remain:
             await self._parse_and_handle_request(remain, reader, writer)
-        return (reader, writer)
 
     async def listen_to_master(self):
         reader, writer = self.master
