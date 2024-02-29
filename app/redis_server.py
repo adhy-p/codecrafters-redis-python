@@ -61,14 +61,14 @@ class RedisServer(abc.ABC):
     async def _broadcast_to_workers(self, _req: bytes) -> bytes:
         return b""
 
-    async def _scan_workers_offset(self, num_min_acks: int, timeout_ms: int) -> int:
+    async def _trigger_timeout(self, timeout_ms: int, callback_event: asyncio.Event):
+        asyncio.sleep(timeout_ms / 1000)
+        callback_event.set()
+
+    async def _wait_acks(self, num_min_acks: int, callback_event: asyncio.Event):
         up_to_date_workers = 0
         logger.info("scanning through worker's offsets")
-        end_time_ms = time.time_ns() // 1_000_000 + timeout_ms
-        while (
-            up_to_date_workers < num_min_acks
-            and time.time_ns() // 1_000_000 < end_time_ms
-        ):
+        while up_to_date_workers < num_min_acks:
             up_to_date_workers = 0
             for _, repl_offset in self.workers.items():
                 logger.info(
@@ -76,8 +76,7 @@ class RedisServer(abc.ABC):
                 )
                 if repl_offset == self.replication_offset:
                     up_to_date_workers += 1
-            await asyncio.sleep(0.125)
-        return up_to_date_workers
+        callback_event.set()
 
     async def _handle_wait(self, req: List[bytes]) -> bytes:
         """
@@ -91,15 +90,22 @@ class RedisServer(abc.ABC):
         logger.info("wait: checking worker's offset")
         min_acks: int = int(req[1])
         timeout_ms: int = int(req[2])
-        num_acks = await self._scan_workers_offset(min_acks, timeout_ms)
+        # we immediately check worker's status
+        # if there are enough acks, respond to client immediately
+        # else, we wait until there are enough events
         num_acks = len(
-            list(
-                filter(
-                    lambda offset: offset == self.replication_offset,
-                    self.workers.values(),
-                )
-            )
+            [v for v in self.workers.values() if v == self.replication_offset]
         )
+        if num_acks < min_acks:
+            event = asyncio.Event()
+            await asyncio.gather(
+                asyncio.to_thread(self._wait_acks, min_acks, event),
+                self._trigger_timeout(timeout_ms, event),
+            )
+            await event.wait()
+            num_acks = len(
+                [v for v in self.workers.values() if v == self.replication_offset]
+            )
 
         logger.info(f"updating replication offset to {self.replication_offset}")
         self.replication_offset += len(broadcasted_msg)
