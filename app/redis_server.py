@@ -76,30 +76,29 @@ class RedisServer(abc.ABC):
                 if repl_offset == self.replication_offset:
                     up_to_date_workers += 1
             await asyncio.sleep(0.01)
-            # num_acks = len(
-            #     list(
-            #         filter(
-            #             lambda offset: offset == self.replication_offset,
-            #             self.workers.values(),
-            #         )
-            #     )
-            # )
         return up_to_date_workers
 
     async def _handle_wait(self, req: List[bytes]) -> bytes:
         """
         checks if the master and the replicas has the same replication offset
         """
-        # min_acks: int = int(req[1])
-        # timeout: int = int(req[2])  # milliseconds
+        min_acks: int = int(req[1])
+        timeout: int = int(req[2])  # milliseconds
 
         logger.info("wait: broadcasting getack command")
         broadcasted_msg = await self._broadcast_to_workers(
             [b"REPLCONF", b"GETACK", b"*"]
         )
         logger.info("wait: checking worker's offset")
-        # num_acks = await self._scan_workers_offset(min_acks, timeout)
-        num_acks = len(self.workers)
+        num_acks = await self._scan_workers_offset(min_acks, timeout)
+        num_acks = len(
+            list(
+                filter(
+                    lambda offset: offset == self.replication_offset,
+                    self.workers.values(),
+                )
+            )
+        )
         self.replication_offset += len(broadcasted_msg)
         return b":" + RedisServer._int_to_bytestr(num_acks) + b"\r\n"
 
