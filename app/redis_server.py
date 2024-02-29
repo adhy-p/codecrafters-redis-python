@@ -149,7 +149,7 @@ class RedisServer(abc.ABC):
             case b"PSYNC":
                 return await self._handle_psync(reader, writer)
             case b"WAIT":
-                return b":0\r\n"
+                return b":" + RedisServer._int_to_bytestr(len(self.workers)) + b"\r\n"
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
