@@ -64,7 +64,7 @@ class RedisServer(abc.ABC):
     async def _scan_workers_offset(self, num_min_acks: int, timeout: int) -> int:
         up_to_date_workers = 0
         logger.info("scanning through worker's offsets")
-        end_time = time.time_ns() // 1_000_000 + timeout
+        end_time = time.time_ns() // 1_000_000 + timeout  # milliseconds
         while (
             up_to_date_workers < num_min_acks and time.time_ns() // 1_000_000 < end_time
         ):
@@ -75,7 +75,7 @@ class RedisServer(abc.ABC):
                 )
                 if repl_offset == self.replication_offset:
                     up_to_date_workers += 1
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(timeout / 1000)
         return up_to_date_workers
 
     async def _handle_wait(self, req: List[bytes]) -> bytes:
@@ -90,8 +90,7 @@ class RedisServer(abc.ABC):
             [b"REPLCONF", b"GETACK", b"*"]
         )
         logger.info("wait: checking worker's offset")
-        # num_acks = await self._scan_workers_offset(min_acks, timeout)
-        await asyncio.sleep(timeout / 1000)
+        num_acks = await self._scan_workers_offset(min_acks, timeout)
         num_acks = len(
             list(
                 filter(
