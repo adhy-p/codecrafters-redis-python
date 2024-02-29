@@ -75,7 +75,7 @@ class RedisServer(abc.ABC):
                 )
                 if repl_offset == self.replication_offset:
                     up_to_date_workers += 1
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.01)
             # num_acks = len(
             #     list(
             #         filter(
