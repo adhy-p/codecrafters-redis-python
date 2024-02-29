@@ -148,6 +148,8 @@ class RedisServer(abc.ABC):
                 return self._handle_replconf(req)
             case b"PSYNC":
                 return await self._handle_psync(reader, writer)
+            case b"WAIT":
+                return b":0\r\n"
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
