@@ -90,7 +90,8 @@ class RedisServer(abc.ABC):
             [b"REPLCONF", b"GETACK", b"*"]
         )
         logger.info("wait: checking worker's offset")
-        num_acks = await self._scan_workers_offset(min_acks, timeout)
+        # num_acks = await self._scan_workers_offset(min_acks, timeout)
+        await asyncio.sleep(timeout / 1000)
         num_acks = len(
             list(
                 filter(
