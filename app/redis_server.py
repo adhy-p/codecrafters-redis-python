@@ -4,7 +4,7 @@ import time
 import abc
 
 from app.resp_parser import RespParser
-from typing import List, Tuple, Set
+from typing import List, Tuple
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("redis_server")
@@ -15,7 +15,7 @@ REPLICATION_ID = b"8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
 class RedisServer(abc.ABC):
     server: asyncio.Server
     kvstore: dict[bytes, tuple[bytes, int]]
-    workers: Set[tuple[asyncio.StreamReader, asyncio.StreamWriter]]
+    workers: dict[tuple[asyncio.StreamReader, asyncio.StreamWriter], int]
     replication_id: bytes
     replication_offset: int
 
@@ -58,13 +58,56 @@ class RedisServer(abc.ABC):
         msg_len = len(msg)
         return b"$" + RedisServer._int_to_bytestr(msg_len) + b"\r\n" + msg + b"\r\n"
 
-    async def _propagate_cmds(self, _req: List[bytes]):
-        pass
+    async def _broadcast_to_workers(self, _req: bytes) -> bytes:
+        return b""
 
-    async def _handle_psync(self, _req: List[bytes]):
-        pass
+    async def _scan_workers_offset(self, num_min_acks: int, timeout: int) -> int:
+        up_to_date_workers = 0
+        logger.info("scanning through worker's offsets")
+        end_time = time.time_ns() // 1_000_000 + timeout
+        while (
+            up_to_date_workers < num_min_acks and time.time_ns() // 1_000_000 < end_time
+        ):
+            up_to_date_workers = 0
+            for _, repl_offset in self.workers.items():
+                logger.info(
+                    f"master's offset: {self.replication_offset}, worker's offset: {repl_offset}"
+                )
+                if repl_offset == self.replication_offset:
+                    up_to_date_workers += 1
+            await asyncio.sleep(0.1)
+            # num_acks = len(
+            #     list(
+            #         filter(
+            #             lambda offset: offset == self.replication_offset,
+            #             self.workers.values(),
+            #         )
+            #     )
+            # )
+        return up_to_date_workers
 
-    def _handle_replconf(self, req: List[bytes]) -> bytes:
+    async def _handle_wait(self, req: List[bytes]) -> bytes:
+        """
+        checks if the master and the replicas has the same replication offset
+        """
+        min_acks: int = int(req[1])
+        timeout: int = int(req[2])  # milliseconds
+
+        logger.info("wait: broadcasting getack command")
+        broadcasted_msg = await self._broadcast_to_workers(
+            [b"REPLCONF", b"GETACK", b"*"]
+        )
+        logger.info("wait: checking worker's offset")
+        num_acks = await self._scan_workers_offset(min_acks, timeout)
+        self.replication_offset += len(broadcasted_msg)
+        return b":" + RedisServer._int_to_bytestr(num_acks) + b"\r\n"
+
+    def _handle_replconf(
+        self,
+        req: List[bytes],
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> bytes:
         conf_type: bytes = req[1]
         match conf_type.upper():
             case b"GETACK":
@@ -75,6 +118,9 @@ class RedisServer(abc.ABC):
                         RedisServer._int_to_bytestr(self.replication_offset),
                     ]
                 )
+            case b"ACK":
+                self.workers[(reader, writer)] = int(req[2])
+                return b""
             case b"LISTENING-PORT":
                 return b"+OK\r\n"
             case b"CAPA":
@@ -112,7 +158,8 @@ class RedisServer(abc.ABC):
                 return b"-Currently only supporting PX for SET timeout\r\n"
             expiry = time.time_ns() // 1_000_000 + int(req[4].decode())
         self.kvstore[key] = (val, expiry)
-        await self._propagate_cmds(req)
+        broadcasted_msg = await self._broadcast_to_workers(req)
+        self.replication_offset += len(broadcasted_msg)
         return b"+OK\r\n"
 
     async def handle_request(
@@ -145,11 +192,13 @@ class RedisServer(abc.ABC):
             case b"REPLCONF":
                 if len(req) < 2:
                     return b"-Missing argument(s) for REPLCONF\r\n"
-                return self._handle_replconf(req)
+                return self._handle_replconf(req, reader, writer)
             case b"PSYNC":
                 return await self._handle_psync(reader, writer)
             case b"WAIT":
-                return b":" + RedisServer._int_to_bytestr(len(self.workers)) + b"\r\n"
+                if len(req) < 3:
+                    return b"-Missing argument(s) for WAIT\r\n"
+                return await self._handle_wait(req)
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
@@ -168,12 +217,13 @@ class RedisMasterServer(RedisServer):
         )
         logger.info("initialising master server...")
         self.kvstore = {}
-        self.workers = set()
+        self.workers = {}
         self.replication_id = REPLICATION_ID
         self.replication_offset = 0
         return self
 
-    async def _propagate_cmds(self, req: List[bytes]):
+    async def _broadcast_to_workers(self, req: List[bytes]) -> bytes:
+        logger.info(f"{req!r}")
         command = RedisServer._encode_command(req)
         logger.info(f"sending {command!r} to all replicas")
         dead_workers = []
@@ -188,7 +238,8 @@ class RedisMasterServer(RedisServer):
                 dead_workers.append((reader, writer))
         # clean up dead workers
         for w in dead_workers:
-            self.workers.remove(w)
+            self.workers.pop(w)
+        return command
 
     async def _handle_psync(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -198,7 +249,7 @@ class RedisMasterServer(RedisServer):
             b"\r\n"
         )  # rdb does not contain a \r\n at the end
 
-        self.workers.add((reader, writer))
+        self.workers[(reader, writer)] = 0
 
         return (
             b"+FULLRESYNC "
@@ -359,7 +410,7 @@ class RedisWorkerServer(RedisServer):
             case b"REPLCONF":
                 if len(req) < 2:
                     return b"-Missing argument(s) for REPLCONF\r\n"
-                return self._handle_replconf(req)
+                return self._handle_replconf(req, self.master[0], self.master[1])
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b""
