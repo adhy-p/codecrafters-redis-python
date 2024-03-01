@@ -75,7 +75,14 @@ class RedisServer(abc.ABC):
         return up_to_date_workers
 
     def _get_up_to_date_servers(self) -> int:
-        return len([v for v in self.workers.values() if v == self.replication_offset])
+        up_to_date = 0
+        for _, offset in self.workers.items():
+            logger.info(
+                f"worker offset: {offset}, master offset: {self.replication_offset}"
+            )
+            if offset == self.replication_offset:
+                up_to_date += 1
+        return up_to_date
 
     async def _handle_wait(self, req: List[bytes]) -> bytes:
         """
