@@ -7,7 +7,7 @@ async def main():
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument("-p", "--port", default=6379, type=int)
     arg_parser.add_argument("--dir", default=".")
-    arg_parser.add_argument("--dbfilename", default="data.rdb")
+    arg_parser.add_argument("--dbfilename", default="dump.rdb")
     arg_parser.add_argument("--replicaof", nargs="*")
     args = arg_parser.parse_args()
     config = {

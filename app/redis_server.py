@@ -6,7 +6,7 @@ import pathlib
 
 from app.resp_parser import RespParser
 from app.rdb_parser import RdbParser
-from typing import List, Tuple, Any
+from typing import List, Any
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("redis_server")
@@ -16,7 +16,8 @@ REPLICATION_ID = b"8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
 
 class RedisServer(abc.ABC):
     server: asyncio.Server
-    kvstore: dict[bytes, tuple[bytes, int]]
+    kvstore: dict[bytes, bytes]
+    expirystore: dict[bytes, int]
     rdb_dir: pathlib.Path
     rdb_file: pathlib.Path
     workers: dict[tuple[asyncio.StreamReader, asyncio.StreamWriter], int]
@@ -66,9 +67,7 @@ class RedisServer(abc.ABC):
         return b""
 
     async def _handle_rdb_keys(self, req: List[bytes]) -> bytes:
-        with open(self.rdb_dir / self.rdb_filename, "rb") as f:
-            rdb_kvstore = RdbParser.parse(f.read())
-            return RedisServer._encode_command(rdb_kvstore.keys())
+        return RedisServer._encode_command(self.kvstore.keys())
 
     async def _handle_config(self, req: List[bytes]) -> bytes:
         if req[1].upper() != b"GET":
@@ -166,11 +165,11 @@ class RedisServer(abc.ABC):
 
     def _handle_get(self, req: List[bytes]) -> bytes:
         key: bytes = req[1]
-        value: Tuple[bytes, int] | None = self.kvstore.get(key)
+        value: bytes | None = self.kvstore.get(key)
+        expiry_ms: int | None = self.expirystore.get(key)
         if value:
-            msg, expiry_ms = value
-            if expiry_ms == -1 or time.time_ns() // 1_000_000 <= expiry_ms:
-                return RedisServer._encode_bulkstr(msg)
+            if expiry_ms is None or time.time_ns() // 1_000_000 <= expiry_ms:
+                return RedisServer._encode_bulkstr(value)
         return b"$-1\r\n"
 
     async def _handle_set(self, req: List[bytes]) -> bytes:
@@ -182,7 +181,8 @@ class RedisServer(abc.ABC):
             if precision.upper() != b"PX":
                 return b"-Currently only supporting PX for SET timeout\r\n"
             expiry_ms = time.time_ns() // 1_000_000 + int(req[4].decode())
-        self.kvstore[key] = (val, expiry_ms)
+        self.kvstore[key] = val
+        self.expirystore[key] = expiry_ms
         broadcasted_msg = await self._broadcast_to_workers(req)
         self.replication_offset += len(broadcasted_msg)
         logger.info(f"updating replication offset to {self.replication_offset}")
@@ -269,9 +269,12 @@ class RedisMasterServer(RedisServer):
         )
         logger.info("initialising master server...")
         self.kvstore = {}
+        self.expirystore = {}
         self.config = config
         self.rdb_dir = pathlib.Path(config.get("dir"))
         self.rdb_filename = pathlib.Path(config.get("dbfilename"))
+        with open(self.rdb_dir / self.rdb_filename, "rb") as f:
+            self.kvstore.update(RdbParser.parse(f.read()))
         self.workers = {}
         self.replication_id = REPLICATION_ID
         self.replication_offset = 0
@@ -334,9 +337,12 @@ class RedisWorkerServer(RedisServer):
         )
         logger.info("initialising worker server...")
         self.kvstore = {}
+        self.expirystore = {}
         self.config = config
         self.rdb_dir = pathlib.Path(config.get("dir"))
         self.rdb_filename = pathlib.Path(config.get("dbfilename"))
+        with open(self.rdb_dir / self.rdb_filename, "rb") as f:
+            self.kvstore.update(RdbParser.parse(f.read()))
         self.workers = set()
         self.replication_id = b"?"
         self.replication_offset = -1
