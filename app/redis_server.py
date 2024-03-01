@@ -81,7 +81,7 @@ class RedisServer(abc.ABC):
             # logger.info(
             #     f"worker offset: {offset}, master offset: {self.replication_offset}"
             # )
-            if offset >= 0:
+            if offset == self.replication_offset:
                 up_to_date += 1
         return up_to_date
 
