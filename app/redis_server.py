@@ -81,7 +81,7 @@ class RedisServer(abc.ABC):
             # logger.info(
             #     f"worker offset: {offset}, master offset: {self.replication_offset}"
             # )
-            if offset == self.replication_offset:
+            if offset >= 0:
                 up_to_date += 1
         return up_to_date
 
@@ -91,7 +91,7 @@ class RedisServer(abc.ABC):
         """
         logger.info("wait: broadcasting getack command")
         broadcasted_msg = await self._broadcast_to_workers(
-            [b"REPLCONF", b"GETACK", b"*"]
+            [b"replconf", b"getack", b"*"]
         )
 
         logger.info("wait: checking worker's offset")
@@ -273,7 +273,7 @@ class RedisMasterServer(RedisServer):
             b"\r\n"
         )  # rdb does not contain a \r\n at the end
 
-        self.workers[(reader, writer)] = 0
+        self.workers[(reader, writer)] = -1
 
         return (
             b"+FULLRESYNC "
