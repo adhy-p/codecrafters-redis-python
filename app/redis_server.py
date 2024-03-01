@@ -176,7 +176,9 @@ class RedisServer(abc.ABC):
         value: bytes | None = self.kvstore.get(key)
         expiry_ms: int | None = self.expirystore.get(key)
         if value:
+            logger.info("get: value found")
             if expiry_ms is None or time.time_ns() // 1_000_000 <= expiry_ms:
+                logger.info("get: expiry OK")
                 return RedisServer._encode_bulkstr(value)
         return b"$-1\r\n"
 
