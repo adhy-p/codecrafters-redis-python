@@ -284,7 +284,7 @@ class RedisMasterServer(RedisServer):
         self.rdb_filename = pathlib.Path(config.get("dbfilename"))
         kvs, exps = self._load_rdb()
         self.kvstore.update(kvs)
-        self.kvstore.update(exps)
+        self.expirystore.update(exps)
         self.workers = {}
         self.replication_id = REPLICATION_ID
         self.replication_offset = 0
@@ -353,7 +353,7 @@ class RedisWorkerServer(RedisServer):
         self.rdb_filename = pathlib.Path(config.get("dbfilename"))
         kvs, exps = self._load_rdb()
         self.kvstore.update(kvs)
-        self.kvstore.update(exps)
+        self.expirystore.update(exps)
         self.workers = set()
         self.replication_id = b"?"
         self.replication_offset = -1
