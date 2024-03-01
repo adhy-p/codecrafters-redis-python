@@ -183,14 +183,15 @@ class RedisServer(abc.ABC):
     async def _handle_set(self, req: List[bytes]) -> bytes:
         key: bytes = req[1]
         val: bytes = req[2]
-        expiry_ms: int = -1
+        expiry_ms: int | None = None
         if len(req) > 3:
             precision: bytes = req[3]
             if precision.upper() != b"PX":
                 return b"-Currently only supporting PX for SET timeout\r\n"
             expiry_ms = time.time_ns() // 1_000_000 + int(req[4].decode())
         self.kvstore[key] = val
-        self.expirystore[key] = expiry_ms
+        if expiry_ms is not None:
+            self.expirystore[key] = expiry_ms
         broadcasted_msg = await self._broadcast_to_workers(req)
         self.replication_offset += len(broadcasted_msg)
         logger.info(f"updating replication offset to {self.replication_offset}")
