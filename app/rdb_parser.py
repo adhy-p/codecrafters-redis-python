@@ -32,7 +32,7 @@ class RdbStringType(Enum):
 
 class RdbParser:
     @staticmethod
-    def parse(data: bytes) -> dict[bytes, bytes]:
+    def parse(data: bytes) -> tuple[dict[bytes, bytes], dict[bytes, int]]:
         (ok, remain) = RdbParser._parse_magic(data)
         if not ok:
             return {}
@@ -40,7 +40,8 @@ class RdbParser:
         (_version, remain) = RdbParser._parse_version(remain)
         logger.info(f"version ok: {_version}")
         aux_data = {}
-        rdb_data = {}
+        kvstore = {}
+        expirystore = {}
         while remain:
             # logger.info(f"remain: {remain!r}")
             # logger.info(f"matching data: {remain[:1]!r}")
@@ -55,12 +56,20 @@ class RdbParser:
                     logger.info(f"db number: {db_number}")
                 case b"\xfd":
                     # expiry time in seconds
-                    remain = remain[1:]
-                    logger.info("fd, skipping...")
+                    logger.info("parsing expiry time (seconds)")
+                    expiry_s, remain = RdbParser._parse_expiry_s(remain)
+                    logger.info("parsing key value pair")
+                    key, value, remain = RdbParser._parse_key_value(remain)
+                    kvstore[key] = value
+                    expirystore[key] = expiry_s / 1000  # milliseconds
                 case b"\xfc":
                     # expiry time in ms
-                    logger.info("fc, skipping...")
-                    remain = remain[1:]
+                    logger.info("parsing expiry time (ms)")
+                    expiry_ms, remain = RdbParser._parse_expiry_ms(remain)
+                    logger.info("parsing key value pair")
+                    key, value, remain = RdbParser._parse_key_value(remain)
+                    kvstore[key] = value
+                    expirystore[key] = expiry_ms
                 case b"\xfb":
                     # resizedb field
                     logger.info("parsing resizedb")
@@ -75,10 +84,10 @@ class RdbParser:
                 case _:
                     logger.info("parsing key value pair")
                     key, value, remain = RdbParser._parse_key_value(remain)
-                    rdb_data[key] = value
+                    kvstore[key] = value
         # todo:
         # assert compute_crc64(data) == remain
-        return rdb_data
+        return kvstore, expirystore
 
     def _parse_magic(data: bytes) -> tuple[bool, bytes]:
         is_correct_magic = data[:5] == b"REDIS"
@@ -87,6 +96,18 @@ class RdbParser:
     def _parse_version(data: bytes) -> tuple[int, bytes]:
         version = int(data[:4])
         return (version, data[4:])
+
+    def _parse_expiry_s(data: bytes) -> tuple[int, bytes]:
+        # skip the opcode
+        remain = data[1:]
+        expiry_ms = int.from_bytes(remain[:4], byteorder=sys.byteorder)
+        return expiry_ms, remain[4:]
+
+    def _parse_expiry_ms(data: bytes) -> tuple[int, bytes]:
+        # skip the opcode
+        remain = data[1:]
+        expiry_ms = int.from_bytes(remain[:8], byteorder=sys.byteorder)
+        return expiry_ms, remain[8:]
 
     def _parse_key_value(data: bytes) -> tuple[bytes, Any, bytes]:
         value_type = RdbValueType(int.from_bytes(data[:1], byteorder=sys.byteorder))
