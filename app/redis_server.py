@@ -89,9 +89,12 @@ class RedisServer(abc.ABC):
         """
         checks if the master and the replicas has the same replication offset
         """
+        if self.replication_offset == 0:
+            return b":" + RedisServer._int_to_bytestr(len(self.workers)) + b"\r\n"
+
         logger.info("wait: broadcasting getack command")
         broadcasted_msg = await self._broadcast_to_workers(
-            [b"replconf", b"getack", b"*"]
+            [b"REPLCONF", b"GETACK", b"*"]
         )
 
         logger.info("wait: checking worker's offset")
