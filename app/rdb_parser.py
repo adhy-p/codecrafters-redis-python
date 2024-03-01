@@ -2,6 +2,11 @@ import sys
 from enum import Enum, auto
 from typing import Any
 
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("rdb_parser")
+
 
 class RdbValueType(Enum):
     STRING = 0
@@ -31,44 +36,44 @@ class RdbParser:
         (ok, remain) = RdbParser._parse_magic(data)
         if not ok:
             return {}
-        print("magic ok")
+        logger.info("magic ok")
         (_version, remain) = RdbParser._parse_version(remain)
-        print(f"version ok: {_version}")
+        logger.info(f"version ok: {_version}")
         aux_data = {}
         rdb_data = {}
         while remain:
-            print(f"remain: {remain!r}")
-            print(f"matching data: {remain[:1]!r}")
+            # logger.info(f"remain: {remain!r}")
+            # logger.info(f"matching data: {remain[:1]!r}")
             match remain[:1]:
                 case b"\xff":
-                    print("ff")
+                    logger.info("ff. done!")
                     break
                 case b"\xfe":
                     # database selector
-                    print("parsing db selector")
+                    logger.info("parsing db selector")
                     db_number, remain = RdbParser._parse_db_selector(remain)
-                    print(f"db number: {db_number}")
+                    logger.info(f"db number: {db_number}")
                 case b"\xfd":
                     # expiry time in seconds
                     remain = remain[1:]
-                    print("fd")
+                    logger.info("fd, skipping...")
                 case b"\xfc":
                     # expiry time in ms
-                    print("fc")
+                    logger.info("fc, skipping...")
                     remain = remain[1:]
                 case b"\xfb":
                     # resizedb field
-                    print("parsing resizedb")
+                    logger.info("parsing resizedb")
                     db_size, expiry_db_size, remain = RdbParser._parse_resizedb(remain)
-                    print(f"db_size: {db_size}, expiry_db_size: {expiry_db_size}")
+                    logger.info(f"db_size: {db_size}, expiry_db_size: {expiry_db_size}")
                 case b"\xfa":
                     # auxiliary fields
-                    print("parsing auxiliary fields")
+                    logger.info("parsing auxiliary fields")
                     aux_kv, remain = RdbParser._parse_aux(remain)
                     aux_data.update(aux_kv)
-                    print(aux_data)
+                    logger.info(aux_data)
                 case _:
-                    print("key value pair")
+                    logger.info("parsing key value pair")
                     key, value, remain = RdbParser._parse_key_value(remain)
                     rdb_data[key] = value
         # todo:
@@ -92,7 +97,7 @@ class RdbParser:
                 value, remain = RdbParser._parse_str(remain)
                 return key, value, remain
             case _:
-                print("not implemented yet!")
+                logger.info("not implemented yet!")
                 raise Exception
 
     def _rdb_int_str_to_int(
@@ -101,26 +106,26 @@ class RdbParser:
         match str_type:
             case RdbStringType.LEN_PREFIX_STR:
                 str_data = int.from_bytes(data[:length], byteorder=sys.byteorder)
-                print(f"len prefix str: {str_data!r}")
+                logger.info(f"len prefix str: {str_data!r}")
                 remain = data[length:]
                 return (str_data, remain)
             case RdbStringType.INT_8_STR:
                 str_data = int.from_bytes(data[:1], byteorder=sys.byteorder)
-                print(f"int8 str: {str_data}")
+                logger.info(f"int8 str: {str_data}")
                 remain = data[1:]
                 return (str_data, remain)
             case RdbStringType.INT_16_STR:
                 str_data = int.from_bytes(data[:2], byteorder=sys.byteorder)
                 remain = data[2:]
-                print(f"int16 str: {str_data}")
+                logger.info(f"int16 str: {str_data}")
                 return (str_data, remain)
             case RdbStringType.INT_32_STR:
                 str_data = int.from_bytes(data[:4], byteorder=sys.byteorder)
                 remain = data[4:]
-                print(f"int32 str: {str_data}")
+                logger.info(f"int32 str: {str_data}")
                 return (str_data, remain)
             case _:
-                print("invalid int rdb str")
+                logger.info("invalid int rdb str")
                 raise Exception
 
     def _parse_resizedb(data: bytes) -> tuple[int, int, bytes]:
@@ -148,7 +153,7 @@ class RdbParser:
         match str_type:
             case RdbStringType.LEN_PREFIX_STR:
                 str_data = remain[:length]
-                print(f"len prefix str: {str_data!r}")
+                logger.info(f"len prefix str: {str_data!r}")
                 remain = remain[length:]
                 return (str_data, remain)
             case (
@@ -158,7 +163,7 @@ class RdbParser:
             ):
                 return RdbParser._rdb_int_str_to_int(length, str_type, remain)
             case RdbStringType.COMPRESSED_STR:
-                print("not implemented yet!")
+                logger.info("not implemented yet!")
                 raise Exception
 
     def _parse_length(data: bytes) -> tuple[int, RdbStringType, bytes]:
