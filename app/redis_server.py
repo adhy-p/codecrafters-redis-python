@@ -273,7 +273,7 @@ class RedisMasterServer(RedisServer):
             b"\r\n"
         )  # rdb does not contain a \r\n at the end
 
-        self.workers[(reader, writer)] = -1
+        self.workers[(reader, writer)] = 0
 
         return (
             b"+FULLRESYNC "
