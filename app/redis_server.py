@@ -69,7 +69,7 @@ class RedisServer(abc.ABC):
                 return RdbParser.parse(f.read())
         except FileNotFoundError:
             logger.info("rdb file not found")
-        return ({}, {})
+        return {}, {}
 
     async def _broadcast_to_workers(self, _req: bytes) -> bytes:
         return b""
@@ -282,7 +282,7 @@ class RedisMasterServer(RedisServer):
         self.config = config
         self.rdb_dir = pathlib.Path(config.get("dir"))
         self.rdb_filename = pathlib.Path(config.get("dbfilename"))
-        kvs, exps = self._load_rdb
+        kvs, exps = self._load_rdb()
         self.kvstore.update(kvs)
         self.kvstore.update(exps)
         self.workers = {}
@@ -351,7 +351,7 @@ class RedisWorkerServer(RedisServer):
         self.config = config
         self.rdb_dir = pathlib.Path(config.get("dir"))
         self.rdb_filename = pathlib.Path(config.get("dbfilename"))
-        kvs, exps = self._load_rdb
+        kvs, exps = self._load_rdb()
         self.kvstore.update(kvs)
         self.kvstore.update(exps)
         self.workers = set()

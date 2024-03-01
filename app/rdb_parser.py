@@ -87,7 +87,7 @@ class RdbParser:
                     kvstore[key] = value
         # todo:
         # assert compute_crc64(data) == remain
-        return kvstore, expirystore
+        return (kvstore, expirystore)
 
     def _parse_magic(data: bytes) -> tuple[bool, bytes]:
         is_correct_magic = data[:5] == b"REDIS"
