@@ -63,7 +63,6 @@ class RedisServer(abc.ABC):
 
     async def _wait_acks(self, num_min_acks: int, timeout_ms: int) -> int:
         up_to_date_workers = 0
-        logger.info("scanning through worker's offsets")
         end_time_ms = time.time_ns() / 1_000_000 + timeout_ms
         while (
             up_to_date_workers < num_min_acks
@@ -78,9 +77,9 @@ class RedisServer(abc.ABC):
     def _get_up_to_date_servers(self) -> int:
         up_to_date = 0
         for _, offset in self.workers.items():
-            # logger.info(
-            #     f"worker offset: {offset}, master offset: {self.replication_offset}"
-            # )
+            logger.info(
+                f"worker offset: {offset}, master offset: {self.replication_offset}"
+            )
             if offset >= self.replication_offset:
                 up_to_date += 1
         return up_to_date
@@ -167,6 +166,7 @@ class RedisServer(abc.ABC):
         self.kvstore[key] = (val, expiry_ms)
         broadcasted_msg = await self._broadcast_to_workers(req)
         self.replication_offset += len(broadcasted_msg)
+        logger.info(f"updating replication offset to {self.replication_offset}")
         return b"+OK\r\n"
 
     async def handle_request(
