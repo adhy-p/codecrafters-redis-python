@@ -61,22 +61,18 @@ class RedisServer(abc.ABC):
     async def _broadcast_to_workers(self, _req: bytes) -> bytes:
         return b""
 
-    async def _trigger_timeout(self, timeout_ms: int, callback_event: asyncio.Event):
-        await asyncio.sleep(timeout_ms / 1000)
-        callback_event.set()
-
-    async def _wait_acks(self, num_min_acks: int, callback_event: asyncio.Event):
+    async def _wait_acks(self, num_min_acks: int, timeout_ms: int) -> int:
         up_to_date_workers = 0
         logger.info("scanning through worker's offsets")
-        while up_to_date_workers < num_min_acks:
-            up_to_date_workers = 0
-            for _, repl_offset in self.workers.items():
-                logger.info(
-                    f"master's offset: {self.replication_offset}, worker's offset: {repl_offset}"
-                )
-                if repl_offset == self.replication_offset:
-                    up_to_date_workers += 1
-        callback_event.set()
+        end_time_ms = time.time_ns() / 1_000_000 + timeout_ms
+        while (
+            up_to_date_workers < num_min_acks
+            and time.time_ns() / 1_000_000 < end_time_ms
+        ):
+            up_to_date_workers = self._get_up_to_date_servers()
+            # allow other task to run
+            await asyncio.sleep(0)
+        return up_to_date_workers
 
     def _get_up_to_date_servers(self) -> int:
         return len([v for v in self.workers.values() if v == self.replication_offset])
@@ -96,13 +92,7 @@ class RedisServer(abc.ABC):
         # we immediately check worker's status
         # if there are enough acks, respond to client immediately
         # else, we wait until there are enough events
-        num_acks = self._get_up_to_date_servers()
-        if num_acks < min_acks:
-            logger.info("not enough acks. sleeping...")
-            await asyncio.sleep(timeout_ms / 1000)
-
-        logger.info("enough acks / timeout triggered")
-        num_acks = self._get_up_to_date_servers()
+        num_acks = await self._wait_acks(min_acks, timeout_ms)
         logger.info(f"updating replication offset to {self.replication_offset}")
         self.replication_offset += len(broadcasted_msg)
 
@@ -208,6 +198,26 @@ class RedisServer(abc.ABC):
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
+
+    async def _parse_and_handle_request(
+        self,
+        req: bytes,
+        _reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> bytes:
+        parsed_requests, orig_req_len = RespParser.parse_request(req)
+        if parsed_requests:
+            logger.info("received requests")
+        for req, req_len in zip(parsed_requests, orig_req_len):
+            logger.info(f"handling request: {req!r}")
+            resp = await self.handle_master_request(req)
+            self.replication_offset += req_len
+            logger.info(f"updating replication offset to {self.replication_offset}")
+            if not resp:
+                continue
+            writer.write(resp)
+            logger.info(f"replied {resp!r} to master")
+            await writer.drain()
 
     @abc.abstractmethod
     async def serve(self):
@@ -375,26 +385,6 @@ class RedisWorkerServer(RedisServer):
                 await writer.wait_closed()
                 return
             await self._parse_and_handle_request(data, reader, writer)
-
-    async def _parse_and_handle_request(
-        self,
-        req: List[bytes],
-        _reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter,
-    ) -> bytes:
-        parsed_requests, orig_req_len = RespParser.parse_request(req)
-        if parsed_requests:
-            logger.info("received requests")
-        for req, req_len in zip(parsed_requests, orig_req_len):
-            logger.info(f"handling request: {req!r}")
-            resp = await self.handle_master_request(req)
-            self.replication_offset += req_len
-            logger.info(f"updating replication offset to {self.replication_offset}")
-            if not resp:
-                continue
-            writer.write(resp)
-            logger.info(f"replied {resp!r} to master")
-            await writer.drain()
 
     def _handle_info(self, req: List[bytes]) -> bytes:
         return super()._handle_info(b"role:slave", req)
