@@ -2,9 +2,10 @@ import asyncio
 import logging
 import time
 import abc
+import pathlib
 
 from app.resp_parser import RespParser
-from typing import List, Tuple
+from typing import List, Tuple, Any
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("redis_server")
@@ -15,6 +16,8 @@ REPLICATION_ID = b"8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
 class RedisServer(abc.ABC):
     server: asyncio.Server
     kvstore: dict[bytes, tuple[bytes, int]]
+    rdb_dir: pathlib.Path
+    rdb_file: pathlib.Path
     workers: dict[tuple[asyncio.StreamReader, asyncio.StreamWriter], int]
     replication_id: bytes
     replication_offset: int
@@ -61,6 +64,16 @@ class RedisServer(abc.ABC):
     async def _broadcast_to_workers(self, _req: bytes) -> bytes:
         return b""
 
+    async def _handle_config(self, req: List[bytes]) -> bytes:
+        if req[1].upper() != b"GET":
+            logger.info("CONFIG {req[1]!r} not supported yet!")
+            return b""
+        config_key = req[2]
+        # todo: catch byte decoding error
+        config_value = self.config.get(config_key.decode("utf-8"))
+        config_value = str(config_value).encode("utf-8") if config_value else b""
+        return self._encode_command([config_key, config_value])
+
     async def _wait_acks(self, num_min_acks: int, timeout_ms: int) -> int:
         up_to_date_workers = 0
         end_time_ms = time.time_ns() / 1_000_000 + timeout_ms
@@ -75,19 +88,19 @@ class RedisServer(abc.ABC):
         return up_to_date_workers
 
     def _get_up_to_date_servers(self) -> int:
+        """
+        checks if the master and the replicas has the same replication offset
+        """
         up_to_date = 0
         for _, offset in self.workers.items():
-            logger.info(
-                f"worker offset: {offset}, master offset: {self.replication_offset}"
-            )
             if offset >= self.replication_offset:
+                """
+                todo: figure out why client's offset is always larger than master's
+                """
                 up_to_date += 1
         return up_to_date
 
     async def _handle_wait(self, req: List[bytes]) -> bytes:
-        """
-        checks if the master and the replicas has the same replication offset
-        """
         if self.replication_offset == 0:
             return b":" + RedisServer._int_to_bytestr(len(self.workers)) + b"\r\n"
 
@@ -206,6 +219,10 @@ class RedisServer(abc.ABC):
                 if len(req) < 3:
                     return b"-Missing argument(s) for WAIT\r\n"
                 return await self._handle_wait(req)
+            case b"CONFIG":
+                if len(req) < 3:
+                    return b"-Missing argument(s) for CONFIG\r\n"
+                return await self._handle_config(req)
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
@@ -237,13 +254,16 @@ class RedisServer(abc.ABC):
 
 class RedisMasterServer(RedisServer):
     @classmethod
-    async def new(cls, port: int):
+    async def new(cls, config: dict[str, Any]):
         self = cls()
         self.server = await asyncio.start_server(
-            self.connection_handler, "localhost", port
+            self.connection_handler, "localhost", config.get("port")
         )
         logger.info("initialising master server...")
         self.kvstore = {}
+        self.config = config
+        self.rdb_dir = pathlib.Path(config.get("dir"))
+        self.rdb_file = pathlib.Path(config.get("dbfilename"))
         self.workers = {}
         self.replication_id = REPLICATION_ID
         self.replication_offset = 0
@@ -299,21 +319,24 @@ class RedisWorkerServer(RedisServer):
     master: tuple[asyncio.StreamReader, asyncio.StreamWriter]
 
     @classmethod
-    async def new(cls, port: int, master: tuple[str, int]):
+    async def new(cls, config: dict[str, Any]):
         self = cls()
         self.server = await asyncio.start_server(
-            self.connection_handler, "localhost", port
+            self.connection_handler, "localhost", config.get("port")
         )
         logger.info("initialising worker server...")
         self.kvstore = {}
+        self.config = config
+        self.rdb_dir = pathlib.Path(config.get("dir"))
+        self.rdb_file = pathlib.Path(config.get("dbfilename"))
         self.workers = set()
         self.replication_id = b"?"
         self.replication_offset = -1
 
-        master_host, master_port = master
+        master_host, master_port = config.get("master")
         reader, writer = await asyncio.open_connection(master_host, master_port)
         self.master = (reader, writer)
-        await self._init_handshake(reader, writer, port)
+        await self._init_handshake(reader, writer, config.get("port"))
         return self
 
     async def _init_handshake(
