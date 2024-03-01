@@ -5,6 +5,7 @@ import abc
 import pathlib
 
 from app.resp_parser import RespParser
+from app.rdb_parser import RdbParser
 from typing import List, Tuple, Any
 
 logging.basicConfig(level=logging.INFO)
@@ -63,6 +64,11 @@ class RedisServer(abc.ABC):
 
     async def _broadcast_to_workers(self, _req: bytes) -> bytes:
         return b""
+
+    async def _handle_rdb_keys(self, req: List[bytes]) -> bytes:
+        with open(self.rdb_dir / self.rdb_filename, "rb") as f:
+            rdb_kvstore = RdbParser.parse(f.read())
+            return RedisServer._encode_command(rdb_kvstore.keys())
 
     async def _handle_config(self, req: List[bytes]) -> bytes:
         if req[1].upper() != b"GET":
@@ -223,6 +229,8 @@ class RedisServer(abc.ABC):
                 if len(req) < 3:
                     return b"-Missing argument(s) for CONFIG\r\n"
                 return await self._handle_config(req)
+            case b"KEYS":
+                return await self._handle_rdb_keys(req)
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
@@ -263,7 +271,7 @@ class RedisMasterServer(RedisServer):
         self.kvstore = {}
         self.config = config
         self.rdb_dir = pathlib.Path(config.get("dir"))
-        self.rdb_file = pathlib.Path(config.get("dbfilename"))
+        self.rdb_filename = pathlib.Path(config.get("dbfilename"))
         self.workers = {}
         self.replication_id = REPLICATION_ID
         self.replication_offset = 0
@@ -328,7 +336,7 @@ class RedisWorkerServer(RedisServer):
         self.kvstore = {}
         self.config = config
         self.rdb_dir = pathlib.Path(config.get("dir"))
-        self.rdb_file = pathlib.Path(config.get("dbfilename"))
+        self.rdb_filename = pathlib.Path(config.get("dbfilename"))
         self.workers = set()
         self.replication_id = b"?"
         self.replication_offset = -1
