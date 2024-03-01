@@ -7,7 +7,7 @@ from app.resp_parser import RespParser
 from typing import List, Tuple
 
 logging.basicConfig(level=logging.INFO)
-# logger = logging.getLogger("redis_server")
+logger = logging.getLogger("redis_server")
 
 REPLICATION_ID = b"8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
 
@@ -27,20 +27,20 @@ class RedisServer(abc.ABC):
             addr: str = writer.get_extra_info("peername")
 
             if not data:
-                # logger.info(f"closing connection with {addr}")
+                logger.info(f"closing connection with {addr}")
                 writer.close()
                 await writer.wait_closed()
                 return
 
             parsed_requests, _ = RespParser.parse_request(data)
-            # if parsed_requests:
-            # logger.info(f"received {parsed_requests!r} from {addr!r}")
+            if parsed_requests:
+                logger.info(f"received {parsed_requests!r} from {addr!r}")
             for req in parsed_requests:
                 resp = await self.handle_request(req, reader, writer)
                 if not resp:
                     continue
                 writer.write(resp)
-                # logger.info(f"replied {resp!r} to client")
+                logger.info(f"replied {resp!r} to client")
                 await writer.drain()
 
     @staticmethod
@@ -67,43 +67,43 @@ class RedisServer(abc.ABC):
 
     async def _wait_acks(self, num_min_acks: int, callback_event: asyncio.Event):
         up_to_date_workers = 0
-        # logger.info("scanning through worker's offsets")
+        logger.info("scanning through worker's offsets")
         while up_to_date_workers < num_min_acks:
             up_to_date_workers = 0
             for _, repl_offset in self.workers.items():
-                # logger.info(
-                #     f"master's offset: {self.replication_offset}, worker's offset: {repl_offset}"
-                # )
+                logger.info(
+                    f"master's offset: {self.replication_offset}, worker's offset: {repl_offset}"
+                )
                 if repl_offset == self.replication_offset:
                     up_to_date_workers += 1
         callback_event.set()
+
+    def _get_up_to_date_servers(self) -> int:
+        return len([v for v in self.workers.values() if v == self.replication_offset])
 
     async def _handle_wait(self, req: List[bytes]) -> bytes:
         """
         checks if the master and the replicas has the same replication offset
         """
-        # logger.info("wait: broadcasting getack command")
+        logger.info("wait: broadcasting getack command")
         broadcasted_msg = await self._broadcast_to_workers(
             [b"REPLCONF", b"GETACK", b"*"]
         )
 
-        # logger.info("wait: checking worker's offset")
+        logger.info("wait: checking worker's offset")
         min_acks: int = int(req[1])
         timeout_ms: int = int(req[2])
         # we immediately check worker's status
         # if there are enough acks, respond to client immediately
         # else, we wait until there are enough events
-        num_acks = len(
-            [v for v in self.workers.values() if v == self.replication_offset]
-        )
+        num_acks = self._get_up_to_date_servers()
         if num_acks < min_acks:
-            # logger.info("not enough acks. sleeping...")
+            logger.info("not enough acks. sleeping...")
             await asyncio.sleep(timeout_ms / 1000)
-            num_acks = len(
-                [v for v in self.workers.values() if v == self.replication_offset]
-            )
 
-        # logger.info(f"updating replication offset to {self.replication_offset}")
+        logger.info("enough acks / timeout triggered")
+        num_acks = self._get_up_to_date_servers()
+        logger.info(f"updating replication offset to {self.replication_offset}")
         self.replication_offset += len(broadcasted_msg)
 
         return b":" + RedisServer._int_to_bytestr(num_acks) + b"\r\n"
@@ -206,7 +206,7 @@ class RedisServer(abc.ABC):
                     return b"-Missing argument(s) for WAIT\r\n"
                 return await self._handle_wait(req)
             case _:
-                # logger.error(f"Received {req[0]!r} command (not supported)!")
+                logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
 
     @abc.abstractmethod
@@ -221,7 +221,7 @@ class RedisMasterServer(RedisServer):
         self.server = await asyncio.start_server(
             self.connection_handler, "localhost", port
         )
-        # logger.info("initialising master server...")
+        logger.info("initialising master server...")
         self.kvstore = {}
         self.workers = {}
         self.replication_id = REPLICATION_ID
@@ -229,18 +229,18 @@ class RedisMasterServer(RedisServer):
         return self
 
     async def _broadcast_to_workers(self, req: List[bytes]) -> bytes:
-        # logger.info(f"preparing to broadcast {req!r}")
+        logger.info(f"preparing to broadcast {req!r}")
         command = RedisServer._encode_command(req)
-        # logger.info(f"broadcasting {command!r} to all replicas")
+        logger.info(f"broadcasting {command!r} to all replicas")
         dead_workers = []
         for reader, writer in self.workers:
             addr: str = writer.get_extra_info("peername")
-            # logger.info(f"sending to replica {addr}")
+            logger.info(f"sending to replica {addr}")
             try:
                 writer.write(command)
                 await writer.drain()
             except ConnectionResetError:
-                # logger.info("worker closed the connection. remove from worker list")
+                logger.info("worker closed the connection. remove from worker list")
                 dead_workers.append((reader, writer))
         # clean up dead workers
         for w in dead_workers:
@@ -283,7 +283,7 @@ class RedisWorkerServer(RedisServer):
         self.server = await asyncio.start_server(
             self.connection_handler, "localhost", port
         )
-        # logger.info("initialising worker server...")
+        logger.info("initialising worker server...")
         self.kvstore = {}
         self.workers = set()
         self.replication_id = b"?"
@@ -299,16 +299,16 @@ class RedisWorkerServer(RedisServer):
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, port: int
     ):
         PING_CMD = b"*1\r\n$4\r\nping\r\n"
-        # logger.info("initialising handshake with master")
-        # logger.info("sending PING")
+        logger.info("initialising handshake with master")
+        logger.info("sending PING")
         writer.write(PING_CMD)
         await writer.drain()
         _resp: bytes = await reader.read(1024)
-        # logger.info(f"received {_resp!r}")
+        logger.info(f"received {_resp!r}")
         # ignore the server's response for now
         # todo: check _resp == PING response
 
-        # logger.info("sending first REPLCONF")
+        logger.info("sending first REPLCONF")
         writer.write(
             RedisServer._encode_command(
                 [b"REPLCONF", b"listening-port", RedisServer._int_to_bytestr(port)]
@@ -316,15 +316,15 @@ class RedisWorkerServer(RedisServer):
         )
         await writer.drain()
         _resp: bytes = await reader.read(1024)
-        # logger.info(f"received {_resp!r}")
+        logger.info(f"received {_resp!r}")
 
-        # logger.info("sending second REPLCONF")
+        logger.info("sending second REPLCONF")
         writer.write(RedisServer._encode_command([b"REPLCONF", b"capa", b"psync2"]))
         await writer.drain()
         _resp: bytes = await reader.read(1024)
-        # logger.info(f"received {_resp!r}")
+        logger.info(f"received {_resp!r}")
 
-        # logger.info("sending PSYNC")
+        logger.info("sending PSYNC")
         writer.write(
             RedisServer._encode_command(
                 [
@@ -336,10 +336,10 @@ class RedisWorkerServer(RedisServer):
         )
         await writer.drain()
         resp: bytes = await reader.read(1024)
-        # logger.info(f"received {_resp!r}")
+        logger.info(f"received {_resp!r}")
 
         fullresync_resp, _length, remain = RespParser.parse_simplestr(resp)
-        # logger.info(f"full resync simplestr: {fullresync_resp!r}")
+        logger.info(f"full resync simplestr: {fullresync_resp!r}")
         cmd_type, id, offset = fullresync_resp.split(b" ")
         assert cmd_type == b"FULLRESYNC"
         self.replication_id = id
@@ -354,10 +354,10 @@ class RedisWorkerServer(RedisServer):
         # for now, assume that the whole rdb file fits to the buffer (1024 bytes)
         # and can be read using a single read() call
 
-        # logger.info(f"rdb file request: {remain!r}")
+        logger.info(f"rdb file request: {remain!r}")
         data = remain if remain else await reader.read(1024)
         rdb_file, _length, remain = RespParser.parse_rdb(data)
-        # logger.info(f"rdb file: {rdb_file!r}")
+        logger.info(f"rdb file: {rdb_file!r}")
 
         # process requests that comes together with the rdb file, if any
         if remain:
@@ -370,7 +370,7 @@ class RedisWorkerServer(RedisServer):
             addr: str = writer.get_extra_info("peername")
 
             if not data:
-                # logger.info(f"closing connection with {addr}")
+                logger.info(f"closing connection with {addr}")
                 writer.close()
                 await writer.wait_closed()
                 return
@@ -383,17 +383,17 @@ class RedisWorkerServer(RedisServer):
         writer: asyncio.StreamWriter,
     ) -> bytes:
         parsed_requests, orig_req_len = RespParser.parse_request(req)
-        # if parsed_requests:
-        # logger.info("received requests")
+        if parsed_requests:
+            logger.info("received requests")
         for req, req_len in zip(parsed_requests, orig_req_len):
-            # logger.info(f"handling request: {req!r}")
+            logger.info(f"handling request: {req!r}")
             resp = await self.handle_master_request(req)
             self.replication_offset += req_len
-            # logger.info(f"updating replication offset to {self.replication_offset}")
+            logger.info(f"updating replication offset to {self.replication_offset}")
             if not resp:
                 continue
             writer.write(resp)
-            # logger.info(f"replied {resp!r} to master")
+            logger.info(f"replied {resp!r} to master")
             await writer.drain()
 
     def _handle_info(self, req: List[bytes]) -> bytes:
@@ -415,7 +415,7 @@ class RedisWorkerServer(RedisServer):
                     return b"-Missing argument(s) for REPLCONF\r\n"
                 return self._handle_replconf(req, self.master[0], self.master[1])
             case _:
-                # logger.error(f"Received {req[0]!r} command (not supported)!")
+                logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b""
 
     async def serve(self):
