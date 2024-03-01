@@ -87,6 +87,7 @@ class RdbParser:
                     kvstore[key] = value
         # todo:
         # assert compute_crc64(data) == remain
+        logger.info(f"kvstore: {kvstore}, expirystore: {expirystore}")
         return (kvstore, expirystore)
 
     def _parse_magic(data: bytes) -> tuple[bool, bytes]:
