@@ -63,6 +63,14 @@ class RedisServer(abc.ABC):
         msg_len = len(msg)
         return b"$" + RedisServer._int_to_bytestr(msg_len) + b"\r\n" + msg + b"\r\n"
 
+    def _load_rdb(self) -> dict[bytes, bytes]:
+        try:
+            with open(self.rdb_dir / self.rdb_filename, "rb") as f:
+                return RdbParser.parse(f.read())
+        except FileNotFoundError:
+            logger.info("rdb file not found")
+        return {}
+
     async def _broadcast_to_workers(self, _req: bytes) -> bytes:
         return b""
 
@@ -273,8 +281,7 @@ class RedisMasterServer(RedisServer):
         self.config = config
         self.rdb_dir = pathlib.Path(config.get("dir"))
         self.rdb_filename = pathlib.Path(config.get("dbfilename"))
-        with open(self.rdb_dir / self.rdb_filename, "rb") as f:
-            self.kvstore.update(RdbParser.parse(f.read()))
+        self.kvstore.update(self._load_rdb())
         self.workers = {}
         self.replication_id = REPLICATION_ID
         self.replication_offset = 0
@@ -341,8 +348,7 @@ class RedisWorkerServer(RedisServer):
         self.config = config
         self.rdb_dir = pathlib.Path(config.get("dir"))
         self.rdb_filename = pathlib.Path(config.get("dbfilename"))
-        with open(self.rdb_dir / self.rdb_filename, "rb") as f:
-            self.kvstore.update(RdbParser.parse(f.read()))
+        self.kvstore.update(self._load_rdb())
         self.workers = set()
         self.replication_id = b"?"
         self.replication_offset = -1
