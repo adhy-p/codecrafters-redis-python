@@ -12,18 +12,29 @@ AGGREGATE_RESP = Union[List[SIMPLE_RESP], List["AGGREGATE_RESP"]]
 
 
 class RespParser:
+    """
+    Parses Redis serialization protocol sent by the client.
+
+    The specification for RESP file can be found here:
+    https://redis.io/docs/reference/protocol-spec/
+
+    All methods (except parse_request) returns a tuple,
+    with the last member being the remaining/unconsumed bytes.
+    """
+
     @staticmethod
     def parse_request(req: bytes) -> tuple[List[AGGREGATE_RESP], List[int]]:
         """
-        receives stream of bytes that represents a redis command
+        receives stream of bytes that represents a redis command/data
         a command is represented by an array of bulk strings.
         we assume that the incoming bytes can have two separate commands
-        e.g. *1\r\n$4\r\nping\r\n*2\r\n$4\r\necho\r\n$3\r\nhey\r\n
+        e.g. *1\r\n$4\r\nping\r\n*2\r\n$4\r\necho\r\n$3\r\nhey\r\n+OK\r\n
 
-        returns a list of commands, e.g.
+        returns a list of commands/data, e.g.
         [
             [b'ping'],
             [b'echo', b'hello'],
+            b'OK',
         ]
         """
         parsed_cmds = []
@@ -85,7 +96,7 @@ class RespParser:
         return (arr, parsed_len, remain)
 
     @staticmethod
-    def parse_rdb(req: bytes) -> tuple[SIMPLE_RESP, int, bytes]:
+    def extract_rdb(req: bytes) -> tuple[SIMPLE_RESP, int, bytes]:
         assert req[:1] == b"$"
         original_len = len(req)
         req = req.lstrip(b"$")

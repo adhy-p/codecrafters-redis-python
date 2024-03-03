@@ -425,7 +425,7 @@ class RedisWorkerServer(RedisServer):
 
         logger.info(f"rdb file request: {remain!r}")
         data = remain if remain else await reader.read(1024)
-        rdb_file, _length, remain = RespParser.parse_rdb(data)
+        rdb_file, _length, remain = RespParser.extract_rdb(data)
         logger.info(f"rdb file: {rdb_file!r}")
 
         # process requests that comes together with the rdb file, if any
