@@ -9,6 +9,11 @@ logger = logging.getLogger("rdb_parser")
 
 
 class RdbValueType(Enum):
+    """
+    A one byte flag before the start of key-value pair
+    to indicate the type of encoding used to save the value.
+    """
+
     STRING = 0
     LIST = 1
     SET = 2
@@ -23,6 +28,15 @@ class RdbValueType(Enum):
 
 
 class RdbStringType(Enum):
+    """
+    Different types of Redis String.
+    - Length prefixed string: length of string (value encoded),
+        followed by the raw bytes of the string.
+    - Integers as string: the two most-significant bits of the length must be 11.
+    Then, we check the value of the remaining 6 bits. 0 -> i8, 1 -> i16, 2 -> i32
+    - Compressed string: Not implemented yet.
+    """
+
     LEN_PREFIX_STR = auto()
     INT_8_STR = auto()
     INT_16_STR = auto()
@@ -31,11 +45,27 @@ class RdbStringType(Enum):
 
 
 class RdbParser:
+    """
+    Parses the rdb file and returns a tuple of dictionaries.
+
+    The specification for rdb file can be found here:
+    https://rdb.fnordig.de/file_format.html
+
+    All private methods returns a tuple, with the last member
+    being the remaining/unconsumed bytes.
+    """
+
     @staticmethod
-    def parse(data: bytes) -> tuple[dict[bytes, bytes], dict[bytes, int]]:
+    def parse(data: bytes) -> tuple[dict[bytes, bytes | Any], dict[bytes, int]]:
+        """
+        Parses the rdb file and returns a tuple of dictionaries.
+
+        The first dictionary is the key-value store,
+        while the second one is the key-expiry store.
+        """
         (ok, remain) = RdbParser._parse_magic(data)
         if not ok:
-            return {}
+            return ({}, {})
         logger.info("magic ok")
         (_version, remain) = RdbParser._parse_version(remain)
         logger.info(f"version ok: {_version}")
@@ -43,8 +73,6 @@ class RdbParser:
         kvstore = {}
         expirystore = {}
         while remain:
-            # logger.info(f"remain: {remain!r}")
-            # logger.info(f"matching data: {remain[:1]!r}")
             match remain[:1]:
                 case b"\xff":
                     logger.info("ff. done!")
@@ -61,7 +89,7 @@ class RdbParser:
                     logger.info("parsing key value pair")
                     key, value, remain = RdbParser._parse_key_value(remain)
                     kvstore[key] = value
-                    expirystore[key] = expiry_s / 1000  # milliseconds
+                    expirystore[key] = expiry_s // 1000  # milliseconds
                 case b"\xfc":
                     # expiry time in ms
                     logger.info("parsing expiry time (ms)")
@@ -90,27 +118,40 @@ class RdbParser:
         logger.info(f"kvstore: {kvstore}, expirystore: {expirystore}")
         return (kvstore, expirystore)
 
+    @staticmethod
     def _parse_magic(data: bytes) -> tuple[bool, bytes]:
         is_correct_magic = data[:5] == b"REDIS"
         return (is_correct_magic, data[5:])
 
+    @staticmethod
     def _parse_version(data: bytes) -> tuple[int, bytes]:
-        version = int(data[:4])
+        version = int.from_bytes(data[:4], byteorder=sys.byteorder)
         return (version, data[4:])
 
+    @staticmethod
     def _parse_expiry_s(data: bytes) -> tuple[int, bytes]:
+        assert data[:1] == b"\xfd"
         # skip the opcode
         remain = data[1:]
         expiry_ms = int.from_bytes(remain[:4], byteorder=sys.byteorder)
         return expiry_ms, remain[4:]
 
+    @staticmethod
     def _parse_expiry_ms(data: bytes) -> tuple[int, bytes]:
+        assert data[:1] == b"\xfc"
         # skip the opcode
         remain = data[1:]
         expiry_ms = int.from_bytes(remain[:8], byteorder=sys.byteorder)
         return expiry_ms, remain[8:]
 
+    @staticmethod
     def _parse_key_value(data: bytes) -> tuple[bytes, Any, bytes]:
+        """
+        for key-value pair,
+        we start by reading the value type (see: RdbValueType Enum)
+        then, we read the key (string encoded)
+        last, we read the encoded value
+        """
         value_type = RdbValueType(int.from_bytes(data[:1], byteorder=sys.byteorder))
         remain = data[1:]
         key, remain = RdbParser._parse_str(remain)
@@ -122,6 +163,7 @@ class RdbParser:
                 logger.info("not implemented yet!")
                 raise Exception
 
+    @staticmethod
     def _rdb_int_str_to_int(
         length: int, str_type: RdbStringType, data: bytes
     ) -> tuple[int, bytes]:
@@ -150,26 +192,33 @@ class RdbParser:
                 logger.info("invalid int rdb str")
                 raise Exception
 
+    @staticmethod
     def _parse_resizedb(data: bytes) -> tuple[int, int, bytes]:
+        assert data[:1] == b"\xfb"
         # skip the opcode
         remain = data[1:]
         db_size, _, remain = RdbParser._parse_length(remain)
         expiry_db_size, _, remain = RdbParser._parse_length(remain)
         return (db_size, expiry_db_size, remain)
 
+    @staticmethod
     def _parse_db_selector(data: bytes) -> tuple[int, bytes]:
+        assert data[:1] == b"\xfe"
         # skip the opcode
         data = data[1:]
         length, _, remain = RdbParser._parse_length(data)
         return (length, remain)
 
-    def _parse_aux(data: bytes) -> tuple[dict[str, str], bytes]:
+    @staticmethod
+    def _parse_aux(data: bytes) -> tuple[dict[bytes, bytes], bytes]:
+        assert data[:1] == b"\xfa"
         # skip the opcode
         data = data[1:]
         key, remain = RdbParser._parse_str(data)
         value, remain = RdbParser._parse_str(remain)
         return ({key: value}, remain)
 
+    @staticmethod
     def _parse_str(data: bytes) -> tuple[bytes | int, bytes]:
         length, str_type, remain = RdbParser._parse_length(data)
         match str_type:
@@ -188,6 +237,7 @@ class RdbParser:
                 logger.info("not implemented yet!")
                 raise Exception
 
+    @staticmethod
     def _parse_length(data: bytes) -> tuple[int, RdbStringType, bytes]:
         first_byte = int.from_bytes(data[:1], byteorder=sys.byteorder)
         remain = data[1:]
@@ -222,3 +272,6 @@ class RdbParser:
                     case 3:
                         str_type = RdbStringType.COMPRESSED_STR
                 return (0, str_type, remain)
+            case _:
+                logger.info("invalid length format")
+                raise Exception
