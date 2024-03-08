@@ -97,6 +97,7 @@ class RedisServer(abc.ABC):
         up_to_date = 0
         for _, offset in self.workers.items():
             # todo: figure out why client's offset is always larger than master's
+            logger.log(f"master: {self.replication_offset}, worker: {offset}")
             if offset >= self.replication_offset:
                 up_to_date += 1
         return up_to_date
@@ -119,8 +120,8 @@ class RedisServer(abc.ABC):
         # if there are enough acks, respond to client immediately
         # else, we wait until there are enough events
         num_acks = await self._wait_acks(min_acks, timeout_ms)
-        logger.info(f"updating replication offset to {self.replication_offset}")
         self.replication_offset += len(broadcasted_msg)
+        logger.info(f"updating replication offset to {self.replication_offset}")
 
         return b":" + RedisServer._int_to_bytestr(num_acks) + b"\r\n"
 
