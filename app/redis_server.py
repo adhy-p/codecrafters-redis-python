@@ -422,7 +422,7 @@ class RedisWorkerServer(RedisServer):
         # process requests that comes together with the rdb file, if any
         if remain:
             await self._parse_and_handle_request(
-                remain, reader, writer, self.handle_master_request
+                remain, reader, writer, self._master_request_handler
             )
 
     async def _listen_to_master(self):
