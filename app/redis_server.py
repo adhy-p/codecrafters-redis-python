@@ -91,13 +91,14 @@ class RedisServer(abc.ABC):
             up_to_date_workers = self._get_up_to_date_servers()
             # allow other task to run
             await asyncio.sleep(0)
+            await asyncio.sleep(0.1)
         return up_to_date_workers
 
     def _get_up_to_date_servers(self) -> int:
         up_to_date = 0
         for _, offset in self.workers.items():
             # todo: figure out why client's offset is always larger than master's
-            logger.info(f"master: {self.replication_offset}, worker: {offset}")
+            # logger.info(f"master: {self.replication_offset}, worker: {offset}")
             if offset >= self.replication_offset:
                 up_to_date += 1
         return up_to_date
