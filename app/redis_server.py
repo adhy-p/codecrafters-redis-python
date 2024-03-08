@@ -39,7 +39,7 @@ class RedisServer(abc.ABC):
                 return
 
             await self._parse_and_handle_request(
-                data, reader, writer, self._handle_request
+                data, reader, writer, self._request_handler
             )
 
     @staticmethod
@@ -182,14 +182,13 @@ class RedisServer(abc.ABC):
         self.kvstore[key] = val
         if expiry_ms is not None:
             self.expirystore[key] = expiry_ms
-        broadcasted_msg = await self._broadcast_to_workers(req)
-        self.replication_offset += len(broadcasted_msg)
-        logger.info(f"updating replication offset to {self.replication_offset}")
+        _ = await self._broadcast_to_workers(req)
         return b"+OK\r\n"
 
-    async def _handle_request(
+    async def _request_handler(
         self,
         req: List[bytes],
+        req_len: int,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> bytes:
@@ -205,6 +204,8 @@ class RedisServer(abc.ABC):
                 if len(req) < 3:
                     return b"-Missing argument(s) for SET\r\n"
                 response = await self._handle_set(req)
+                self.replication_offset += req_len
+                logger.info(f"updating replication offset to {self.replication_offset}")
                 return response
             case b"GET":
                 if len(req) < 2:
@@ -246,9 +247,7 @@ class RedisServer(abc.ABC):
             logger.info("received requests")
         for req, req_len in zip(parsed_requests, orig_req_len):
             logger.info(f"handling request: {req!r}")
-            resp = await request_handler(req, _reader, writer)
-            self.replication_offset += req_len
-            logger.info(f"updating replication offset to {self.replication_offset}")
+            resp = await request_handler(req, req_len, _reader, writer)
             if not resp:
                 continue
             writer.write(resp)
@@ -445,23 +444,27 @@ class RedisWorkerServer(RedisServer):
     async def _master_request_handler(
         self,
         req: List[bytes],
+        req_len: int,
         _reader: asyncio.StreamReader,
         _writer: asyncio.StreamWriter,
     ) -> bytes:
         assert len(req) > 0
+        reply = b""
         match req[0].upper():
             case b"SET":
                 if len(req) < 3:
                     return b"-Missing argument(s) for SET\r\n"
                 await self._handle_set(req)
-                return b""
             case b"REPLCONF":
                 if len(req) < 2:
                     return b"-Missing argument(s) for REPLCONF\r\n"
-                return self._handle_replconf(req, self.master[0], self.master[1])
+                reply = self._handle_replconf(req, self.master[0], self.master[1])
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b""
+        self.replication_offset += req_len
+        logger.info(f"updating replication offset to {self.replication_offset}")
+        return reply
 
     async def serve(self):
         async with self.server:
