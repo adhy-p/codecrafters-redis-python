@@ -461,7 +461,6 @@ class RedisWorkerServer(RedisServer):
                 reply = self._handle_replconf(req, self.master[0], self.master[1])
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
-                return b""
         self.replication_offset += req_len
         logger.info(f"updating replication offset to {self.replication_offset}")
         return reply
