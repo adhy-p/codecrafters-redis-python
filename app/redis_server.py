@@ -91,7 +91,6 @@ class RedisServer(abc.ABC):
             up_to_date_workers = self._get_up_to_date_servers()
             # allow other task to run
             await asyncio.sleep(0)
-            await asyncio.sleep(0.1)
         return up_to_date_workers
 
     def _get_up_to_date_servers(self) -> int:
@@ -121,8 +120,8 @@ class RedisServer(abc.ABC):
         # if there are enough acks, respond to client immediately
         # else, we wait until there are enough events
         num_acks = await self._wait_acks(min_acks, timeout_ms)
-        self.replication_offset += len(broadcasted_msg)
-        logger.info(f"updating replication offset to {self.replication_offset}")
+        # self.replication_offset += len(broadcasted_msg)
+        # logger.info(f"updating replication offset to {self.replication_offset}")
 
         return b":" + RedisServer._int_to_bytestr(num_acks) + b"\r\n"
 
