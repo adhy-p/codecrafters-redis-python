@@ -69,7 +69,7 @@ class RedisServer(abc.ABC):
         return b""
 
     async def _handle_rdb_keys(self, req: List[bytes]) -> bytes:
-        return RedisServer._encode_command([self.kvstore.keys()])
+        return RedisServer._encode_command(list(self.kvstore.keys()))
 
     async def _handle_config(self, req: List[bytes]) -> bytes:
         if req[1].upper() != b"GET":
@@ -109,9 +109,7 @@ class RedisServer(abc.ABC):
 
     async def _handle_wait(self, req: List[bytes]) -> bytes:
         logger.info("wait: broadcasting getack command")
-        broadcasted_msg = await self._broadcast_to_workers(
-            [b"REPLCONF", b"GETACK", b"*"]
-        )
+        _ = await self._broadcast_to_workers([b"REPLCONF", b"GETACK", b"*"])
 
         logger.info("wait: checking worker's offset")
         min_acks: int = int(req[1])
