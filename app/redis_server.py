@@ -73,9 +73,10 @@ class RedisServer(abc.ABC):
         return b""
 
     def _handle_xadd(self, req: List[bytes]) -> bytes:
-        stream_key = req[2]
+        stream_key = req[1]
+        stream_id = req[2]
         self.streamstore[stream_key] = req[3:]
-        return RedisServer._encode_bulkstr(stream_key)
+        return RedisServer._encode_bulkstr(stream_id)
 
     def _handle_type(self, req: List[bytes]) -> bytes:
         if self._handle_get(req) != b"$-1\r\n":
