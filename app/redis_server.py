@@ -71,6 +71,11 @@ class RedisServer(abc.ABC):
     async def _broadcast_to_workers(self, _req: List[bytes]) -> bytes:
         return b""
 
+    def _handle_type(self, req: List[bytes]) -> bytes:
+        if self._handle_get(req) != b"$-1\r\n":
+            return b"+string\r\n"
+        return b"+none\r\n"
+
     async def _handle_rdb_keys(self, req: List[bytes]) -> bytes:
         return RedisServer._encode_command(list(self.kvstore.keys()))
 
@@ -237,6 +242,8 @@ class RedisServer(abc.ABC):
                 self.save_upon_exit = True
                 logger.info("server will write data to disk upon exit")
                 return b"+OK\r\n"
+            case b"TYPE":
+                return self._handle_type(req)
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
