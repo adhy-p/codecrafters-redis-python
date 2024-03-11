@@ -3,6 +3,8 @@ import logging
 import time
 import abc
 import pathlib
+import datetime
+import sys
 
 from app.resp_parser import RespParser
 from app.rdb_parser import RdbParser
@@ -24,6 +26,7 @@ class RedisServer(abc.ABC):
     workers: dict[tuple[asyncio.StreamReader, asyncio.StreamWriter], int]
     replication_id: bytes
     replication_offset: int
+    save_upon_exit: bool
 
     async def connection_handler(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -230,6 +233,10 @@ class RedisServer(abc.ABC):
                 return await self._handle_config(req)
             case b"KEYS":
                 return await self._handle_rdb_keys(req)
+            case b"SAVE":
+                self.save_upon_exit = True
+                logger.info("server will write data to disk upon exit")
+                return b"+OK\r\n"
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
@@ -257,6 +264,60 @@ class RedisServer(abc.ABC):
     async def serve(self):
         pass
 
+    def _encode_rdb(self) -> bytes:
+        # todo: maybe move this method to rdb_parser module
+        # (and then rename the module to rdb util or smth)
+        def length_encode(i: int) -> bytes:
+            # currently does not support special encoding \x11
+            if i <= 63:
+                return i.to_bytes(1, byteorder=sys.byteorder)
+            elif i <= 16383:
+                return b"\x01" + i.to_bytes(2, byteorder=sys.byteorder)[1:]
+            return (
+                b"\x10" + int(0).to_bytes(6) + i.to_bytes(32, byteorder=sys.byteorder)
+            )
+
+        def string_encode(s: bytes) -> bytes:
+            # currently only supports length-prefixed str
+            return length_encode(len(s)) + s
+
+        # hard-coding some of the fields
+        MAGIC = b"REDIS"
+        VERSION = b"0011"
+        # skip auxiliary fields
+        db_selector = (
+            b"\xfe\x00\xfb"
+            + length_encode(len(self.kvstore))
+            + length_encode(len(self.expirystore))
+        )
+
+        kvdata = b""
+        for key, val in self.kvstore.items():
+            if key in self.expirystore:
+                kvdata += b"\xfc" + self.expirystore[key].to_bytes(
+                    8, byteorder=sys.byteorder, signed=False
+                )
+            # for now, hardcode value type to string
+            kvdata += b"\x00"
+            kvdata += string_encode(key)
+            kvdata += string_encode(val)
+
+        END = b"\xff"
+        dump = MAGIC + VERSION + db_selector + kvdata + END
+        # todo: implement checksum
+        # https://github.com/redis/redis/blob/unstable/src/crc64.c
+        checksum = int(0).to_bytes(8)
+        logger.info(f"{dump!r}")
+        return dump + checksum
+
+    async def save_data(self):
+        if not self.save_upon_exit:
+            return
+        timestamp = datetime.datetime.now().strftime("%y%m%d_%H%M%S")
+        filename = timestamp + "dump.rdb"
+        with open(filename, "wb") as f:
+            f.write(self._encode_rdb())
+
 
 class RedisMasterServer(RedisServer):
     @classmethod
@@ -277,6 +338,7 @@ class RedisMasterServer(RedisServer):
         self.workers = {}
         self.replication_id = REPLICATION_ID
         self.replication_offset = 0
+        self.save_upon_exit = False
         return self
 
     async def _broadcast_to_workers(self, req: List[bytes]) -> bytes:
@@ -322,7 +384,10 @@ class RedisMasterServer(RedisServer):
 
     async def serve(self):
         async with self.server:
-            await self.server.serve_forever()
+            try:
+                await self.server.serve_forever()
+            except asyncio.CancelledError:
+                await self.save_data()
 
 
 class RedisWorkerServer(RedisServer):
@@ -346,6 +411,7 @@ class RedisWorkerServer(RedisServer):
         self.workers = set()
         self.replication_id = b"?"
         self.replication_offset = -1
+        self.save_upon_exit = False
 
         master_host, master_port = config.get("master")
         reader, writer = await asyncio.open_connection(master_host, master_port)
@@ -466,5 +532,8 @@ class RedisWorkerServer(RedisServer):
 
     async def serve(self):
         async with self.server:
-            await self._listen_to_master()
-            await self.server.serve_forever()
+            try:
+                await self._listen_to_master()
+                await self.server.serve_forever()
+            except asyncio.CancelledError:
+                await self.save_data()

@@ -124,8 +124,8 @@ class RdbParser:
         return (is_correct_magic, data[5:])
 
     @staticmethod
-    def _parse_version(data: bytes) -> tuple[int, bytes]:
-        version = int.from_bytes(data[:4], byteorder=sys.byteorder)
+    def _parse_version(data: bytes) -> tuple[bytes, bytes]:
+        version = data[:4]
         return (version, data[4:])
 
     @staticmethod
