@@ -20,6 +20,7 @@ class RedisServer(abc.ABC):
     server: asyncio.Server
     kvstore: dict[bytes, bytes]
     expirystore: dict[bytes, int]
+    streamstore: dict[bytes, bytes]
     config: dict[str, Any]
     rdb_dir: pathlib.Path
     rdb_filename: pathlib.Path
@@ -71,9 +72,16 @@ class RedisServer(abc.ABC):
     async def _broadcast_to_workers(self, _req: List[bytes]) -> bytes:
         return b""
 
+    def _handle_xadd(self, req: List[bytes]) -> bytes:
+        stream_key = req[2]
+        self.streamstore[stream_key] = req[3:]
+        return RedisServer._encode_bulkstr(stream_key)
+
     def _handle_type(self, req: List[bytes]) -> bytes:
         if self._handle_get(req) != b"$-1\r\n":
             return b"+string\r\n"
+        if self.streamstore.get(req[1]):
+            return b"+stream\r\n"
         return b"+none\r\n"
 
     async def _handle_rdb_keys(self, req: List[bytes]) -> bytes:
@@ -244,6 +252,8 @@ class RedisServer(abc.ABC):
                 return b"+OK\r\n"
             case b"TYPE":
                 return self._handle_type(req)
+            case b"XADD":
+                return self._handle_xadd(req)
             case _:
                 logger.error(f"Received {req[0]!r} command (not supported)!")
                 return b"-Command not supported yet!\r\n"
@@ -336,6 +346,7 @@ class RedisMasterServer(RedisServer):
         logger.info("initialising master server...")
         self.kvstore = {}
         self.expirystore = {}
+        self.streamstore = {}
         self.config = config
         self.rdb_dir = pathlib.Path(config.get("dir"))
         self.rdb_filename = pathlib.Path(config.get("dbfilename"))
@@ -409,6 +420,7 @@ class RedisWorkerServer(RedisServer):
         logger.info("initialising worker server...")
         self.kvstore = {}
         self.expirystore = {}
+        self.streamstore = {}
         self.config = config
         self.rdb_dir = pathlib.Path(config.get("dir"))
         self.rdb_filename = pathlib.Path(config.get("dbfilename"))
