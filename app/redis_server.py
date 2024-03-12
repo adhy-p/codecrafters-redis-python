@@ -86,15 +86,15 @@ class RedisServer(abc.ABC):
         # int.from_bytes(b'123') = 3224115
         # int(b'123') = 123
         # the second case is the correct one
+        entry_ms = 0 if entry_ms == b"*" else int(entry_ms)
+        entry_seqnum = 0 if entry_seqnum == b"*" else int(entry_seqnum)
         if stream_key in self.streamstore:
             last_id = list(self.streamstore[stream_key])[-1]
-            entry_ms = 0 if entry_ms == b"*" else int(entry_ms)
-            entry_seqnum = last_id[1] + 1 if entry_seqnum == b"*" else int(entry_seqnum)
+            if entry_ms == last_id[0]:
+                entry_seqnum = last_id[1] + 1
             if last_id >= (entry_ms, entry_seqnum):
                 return b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"
         else:
-            entry_ms = 0 if entry_ms == b"*" else int(entry_ms)
-            entry_seqnum = 0 if entry_seqnum == b"*" else int(entry_seqnum)
             if entry_ms == 0 and entry_seqnum == 0:
                 entry_seqnum += 1
         self.streamstore[stream_key][(entry_ms, entry_seqnum)] = req[3:]
