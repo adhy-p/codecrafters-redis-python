@@ -78,19 +78,19 @@ class RedisServer(abc.ABC):
         stream_id: List[bytes] = req[2].split(b"-", maxsplit=1)
         if len(stream_id) != 2:
             return b"-ERR Invalid ID\r\n"
-        entry_ms, entry_seqnum = stream_id
-        if entry_ms == b"0" and entry_seqnum == b"0":
+        input_entry_ms, input_entry_seqnum = stream_id
+        if input_entry_ms == b"0" and input_entry_seqnum == b"0":
             return b"-ERR The ID specified in XADD must be greater than 0-0\r\n"
 
         # note: the numbers are sent in bytestring
         # int.from_bytes(b'123') = 3224115
         # int(b'123') = 123
         # the second case is the correct one
-        entry_ms = 0 if entry_ms == b"*" else int(entry_ms)
-        entry_seqnum = 0 if entry_seqnum == b"*" else int(entry_seqnum)
+        entry_ms = 0 if input_entry_ms == b"*" else int(input_entry_ms)
+        entry_seqnum = 0 if input_entry_seqnum == b"*" else int(input_entry_seqnum)
         if stream_key in self.streamstore:
             last_id = list(self.streamstore[stream_key])[-1]
-            if entry_ms == last_id[0]:
+            if entry_ms == last_id[0] and input_entry_seqnum == b"*":
                 entry_seqnum = last_id[1] + 1
             if last_id >= (entry_ms, entry_seqnum):
                 return b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"
