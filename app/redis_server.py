@@ -9,6 +9,7 @@ import sys
 from app.resp_parser import RespParser
 from app.rdb_parser import RdbParser
 from typing import List, Any, Callable
+from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("redis_server")
@@ -20,7 +21,7 @@ class RedisServer(abc.ABC):
     server: asyncio.Server
     kvstore: dict[bytes, bytes]
     expirystore: dict[bytes, int]
-    streamstore: dict[bytes, bytes]
+    streamstore: dict[bytes, dict[bytes, bytes]]
     config: dict[str, Any]
     rdb_dir: pathlib.Path
     rdb_filename: pathlib.Path
@@ -74,9 +75,18 @@ class RedisServer(abc.ABC):
 
     def _handle_xadd(self, req: List[bytes]) -> bytes:
         stream_key = req[1]
-        stream_id = req[2]
-        self.streamstore[stream_key] = req[3:]
-        return RedisServer._encode_bulkstr(stream_id)
+        stream_id: List[bytes] = req[2].split(b"-", maxsplit=1)
+        if len(stream_id) != 2:
+            return b"-ERR Invalid ID\r\n"
+        entry_ms, entry_seqnum = stream_id
+        if stream_key in self.streamstore:
+            last_id = list(self.streamstore[stream_key])[-1]
+            if last_id >= (entry_ms, entry_seqnum):
+                return b"-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"
+        if entry_ms == b"0" and entry_seqnum == b"0":
+            return b"-ERR The ID specified in XADD must be greater than 0-0\r\n"
+        self.streamstore[stream_key][(entry_ms, entry_seqnum)] = req[3:]
+        return RedisServer._encode_bulkstr(req[2])
 
     def _handle_type(self, req: List[bytes]) -> bytes:
         if self._handle_get(req) != b"$-1\r\n":
@@ -347,7 +357,7 @@ class RedisMasterServer(RedisServer):
         logger.info("initialising master server...")
         self.kvstore = {}
         self.expirystore = {}
-        self.streamstore = {}
+        self.streamstore = defaultdict(dict)
         self.config = config
         self.rdb_dir = pathlib.Path(config.get("dir"))
         self.rdb_filename = pathlib.Path(config.get("dbfilename"))
@@ -421,7 +431,7 @@ class RedisWorkerServer(RedisServer):
         logger.info("initialising worker server...")
         self.kvstore = {}
         self.expirystore = {}
-        self.streamstore = {}
+        self.streamstore = defaultdict(dict)
         self.config = config
         self.rdb_dir = pathlib.Path(config.get("dir"))
         self.rdb_filename = pathlib.Path(config.get("dbfilename"))
